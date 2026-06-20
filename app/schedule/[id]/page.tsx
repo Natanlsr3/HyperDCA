@@ -3,6 +3,8 @@
 import { usePrivy } from "@privy-io/react-auth";
 import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
+import { AuthUnavailable } from "@/components/auth-unavailable";
+import { readJsonResponse } from "@/lib/http/client";
 
 interface BasketAsset {
   coin: string;
@@ -17,6 +19,11 @@ interface Basket {
 }
 
 export default function ScheduleSetupPage() {
+  if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <AuthUnavailable />;
+  return <ScheduleSetupContent />;
+}
+
+function ScheduleSetupContent() {
   const { id } = useParams<{ id: string }>();
   const { authenticated, login, getAccessToken } = usePrivy();
   const router = useRouter();
@@ -28,11 +35,12 @@ export default function ScheduleSetupPage() {
   const [carryPct, setCarryPct] = useState<number | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [demoNotice, setDemoNotice] = useState<string | null>(null);
 
   useEffect(() => {
     fetch(`/api/baskets?id=${id}`)
-      .then((r) => r.json())
-      .then((d) => setBasket(d.basket));
+      .then((r) => readJsonResponse<{ basket?: Basket }>(r))
+      .then((d) => setBasket(d.basket ?? null));
   }, [id]);
 
   useEffect(() => {
@@ -42,7 +50,7 @@ export default function ScheduleSetupPage() {
       const res = await fetch(`/api/portfolio?basketId=${id}&leverage=${leverage}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
-      const data = await res.json();
+      const data = await readJsonResponse<{ carry?: { basketAnnualizedPct: number } }>(res);
       if (data.carry) setCarryPct(data.carry.basketAnnualizedPct);
     })();
   }, [authenticated, id, leverage, getAccessToken]);
@@ -67,8 +75,11 @@ export default function ScheduleSetupPage() {
           params: { slippage: 0.01, intraday_drop: 0.03, dip_threshold: 0.1 },
         }),
       });
-      const data = await res.json();
-      if (data.error) throw new Error(data.error);
+      const data = await readJsonResponse<{ error?: string }>(res);
+      if (data.error) {
+        setDemoNotice(data.error);
+        return;
+      }
       router.push("/dashboard");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to create schedule");
@@ -98,6 +109,12 @@ export default function ScheduleSetupPage() {
       </div>
 
       <div className="card space-y-4">
+        {demoNotice && (
+          <div className="rounded-[8px] border border-amber-200 bg-amber-50 p-3 text-sm text-amber-900">
+            <p className="font-semibold">Demo database mode</p>
+            <p className="mt-1">{demoNotice}</p>
+          </div>
+        )}
         <div>
           <label className="label">Amount per cycle (USD)</label>
           <input

@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { verifyPrivyToken } from "@/lib/auth/privy";
 import { getUserByPrivyId } from "@/lib/db/queries";
+import { isServiceDbConfigured } from "@/lib/db/client";
 import type { ClearinghouseStateResponse } from "@nktkas/hyperliquid/api/info";
 import {
   estimateCarryForAssets,
@@ -12,6 +13,24 @@ import { getBasketById } from "@/lib/db/queries";
 
 export async function GET(req: Request) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json({
+        wallet: null,
+        accountValue: 0,
+        totalMarginUsed: 0,
+        positions: [],
+        funding: [],
+        carry: null,
+        baskets_followed: [],
+        mirror_history: [],
+        guardrailFlagged: false,
+        guardrailDetail: null,
+        demo: true,
+        code: "DATABASE_NOT_CONFIGURED",
+        message: "Portfolio unlocks when Supabase is connected.",
+      });
+    }
+
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const user = await getUserByPrivyId(claims.userId);
     if (!user?.main_wallet) {
@@ -41,6 +60,20 @@ export async function GET(req: Request) {
       const basket = await getBasketById(basketId);
       carry = await estimateCarryForAssets(basket.basket_assets, leverage);
     }
+    const supa = (await import("@/lib/db/client")).createServiceClient();
+    const [{ data: followedBaskets }, { data: mirrorExecutions }] = await Promise.all([
+      supa
+        .from("basket_followers")
+        .select("*, baskets(*, basket_assets(*))")
+        .eq("user_id", user.id)
+        .order("created_at", { ascending: false }),
+      supa
+        .from("mirror_executions")
+        .select("*, baskets(name, theme)")
+        .eq("user_id", user.id)
+        .order("execution_time", { ascending: false })
+        .limit(20),
+    ]);
 
     return NextResponse.json({
       wallet,
@@ -49,6 +82,8 @@ export async function GET(req: Request) {
       positions,
       funding: funding.slice(0, 50),
       carry,
+      baskets_followed: followedBaskets ?? [],
+      mirror_history: mirrorExecutions ?? [],
       guardrailFlagged: user.guardrail_flagged,
       guardrailDetail: user.guardrail_detail,
     });

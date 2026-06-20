@@ -1,9 +1,19 @@
 import { NextResponse } from "next/server";
 import { verifyPrivyToken } from "@/lib/auth/privy";
 import { createSchedule, getUserByPrivyId, getUserSchedules } from "@/lib/db/queries";
+import { isServiceDbConfigured } from "@/lib/db/client";
 
 export async function GET(req: Request) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json({
+        schedules: [],
+        demo: true,
+        code: "DATABASE_NOT_CONFIGURED",
+        message: "Schedules unlock when Supabase is connected.",
+      });
+    }
+
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const user = await getUserByPrivyId(claims.userId);
     if (!user) return NextResponse.json({ schedules: [] });
@@ -17,6 +27,16 @@ export async function GET(req: Request) {
 
 export async function POST(req: Request) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json(
+        {
+          error: "Schedules unlock when Supabase is connected.",
+          code: "DATABASE_NOT_CONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
+
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const user = await getUserByPrivyId(claims.userId);
     if (!user) return NextResponse.json({ error: "User not found" }, { status: 404 });

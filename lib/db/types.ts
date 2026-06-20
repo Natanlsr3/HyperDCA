@@ -8,6 +8,9 @@ export interface User {
   privy_id: string;
   email: string | null;
   main_wallet: string | null;
+  telegram_chat_id?: string | null;
+  telegram_username?: string | null;
+  is_admin?: boolean;
   builder_fee_approved: boolean;
   guardrail_flagged: boolean;
   guardrail_detail: Record<string, unknown> | null;
@@ -30,6 +33,13 @@ export interface Basket {
   theme: string;
   description: string | null;
   is_public: boolean;
+  is_testnet?: boolean;
+  roi_30d?: number;
+  roi_ytd?: number;
+  hit_rate?: number;
+  followers_count?: number;
+  total_trades?: number;
+  last_rebalance?: string | null;
   created_at: string;
 }
 
@@ -114,4 +124,76 @@ export interface TradeResult {
   refPrice?: number;
   dropPct?: number;
   cloid?: string;
+}
+
+export type FollowMode = "manual" | "auto";
+export type NetworkFilter = "mainnet" | "testnet" | "all";
+export type BasketSortKey = "roi_30d" | "roi_ytd" | "followers_count" | "hit_rate" | "created_at";
+
+export interface BasketFollower {
+  id: string;
+  user_id: string;
+  basket_id: string;
+  follow_mode: FollowMode;
+  follower_roi: number;
+  trades_mirrored: number;
+  mirror_count: number;
+  telegram_notified: boolean;
+  created_at: string;
+}
+
+export interface BasketChange {
+  id: string;
+  basket_id: string;
+  changed_by_user_id: string | null;
+  old_composition: CompositionItem[];
+  new_composition: CompositionItem[];
+  change_timestamp: string;
+  users_notified_count: number;
+  users_who_mirrored: string[];
+}
+
+export interface Notification {
+  id: string;
+  user_id: string;
+  basket_id: string | null;
+  notification_type: "basket_updated" | "mirror_executed" | "risk_alert" | string;
+  title: string;
+  message: string;
+  telegram_message_id: number | null;
+  is_read: boolean;
+  created_at: string;
+}
+
+export interface CompositionItem {
+  coin: string;
+  weight: number;
+  dex: string;
+  sz_decimals?: number;
+  collateral?: string;
+  swap_pair?: string | null;
+  is_cross?: boolean;
+}
+
+export interface MirrorTradeOrder {
+  asset: BasketAsset;
+  action: "BUY" | "SELL";
+  currentWeight: number;
+  targetWeight: number;
+  deltaWeight: number;
+  notionalUsd: number;
+  estimatedSize?: number;
+}
+
+export interface MirrorExecution {
+  id: string;
+  user_id: string;
+  basket_id: string;
+  old_composition: CompositionItem[];
+  new_composition: CompositionItem[];
+  trades_executed: TradeResult[];
+  total_slippage: number | null;
+  execution_time: string;
+  success: boolean;
+  error_message: string | null;
 }

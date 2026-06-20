@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyPrivyToken } from "@/lib/auth/privy";
+import { isServiceDbConfigured } from "@/lib/db/client";
 import { upsertUser, getUserByPrivyId, saveAgentKey } from "@/lib/db/queries";
 import { encryptPrivateKey } from "@/lib/crypto/envelope";
 import { generateAgentKeypair } from "@/lib/executor/run-schedule";
@@ -10,6 +11,16 @@ import {
 
 export async function POST(req: Request) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json(
+        {
+          error: "Onboarding unlocks when Supabase is connected.",
+          code: "DATABASE_NOT_CONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
+
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const body = await req.json().catch(() => ({}));
     const email = body.email as string | undefined;
@@ -45,6 +56,15 @@ export async function POST(req: Request) {
 
 export async function GET(req: Request) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json({
+        user: null,
+        demo: true,
+        code: "DATABASE_NOT_CONFIGURED",
+        message: "Onboarding unlocks when Supabase is connected.",
+      });
+    }
+
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const user = await getUserByPrivyId(claims.userId);
     return NextResponse.json({ user });

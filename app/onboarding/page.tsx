@@ -3,8 +3,15 @@
 import { usePrivy } from "@privy-io/react-auth";
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AuthUnavailable } from "@/components/auth-unavailable";
+import { readJsonResponse } from "@/lib/http/client";
 
 export default function OnboardingPage() {
+  if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <AuthUnavailable />;
+  return <OnboardingContent />;
+}
+
+function OnboardingContent() {
   const { authenticated, login, user, getAccessToken } = usePrivy();
   const router = useRouter();
   const [step, setStep] = useState(1);
@@ -44,8 +51,9 @@ export default function OnboardingPage() {
           email: user?.email?.address,
         }),
       });
-      const data = await res.json();
+      const data = await readJsonResponse<{ error?: string; agentAddress?: string }>(res);
       if (data.error) throw new Error(data.error);
+      if (!data.agentAddress) throw new Error("Agent address missing from onboarding response");
       setAgentAddress(data.agentAddress);
       setStep(2);
       setStatus("Sign approveAgent + approveBuilderFee in your wallet (HL UI or SDK).");

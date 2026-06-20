@@ -8,7 +8,17 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "phase0": "tsx scripts/phase0-spike.ts"
+    "phase0": "tsx scripts/phase0-spike.ts",
+    "seed:baskets": "tsx scripts/seed-baskets.ts",
+    "telegram:bot": "tsx scripts/telegram-bot.ts",
+    "validate": "tsx scripts/validate-and-fix.ts --mode=check",
+    "validate:fix": "tsx scripts/validate-and-fix.ts --mode=fix",
+    "validate:watch": "tsx scripts/validate-and-fix.ts --mode=watch",
+    "validate:verbose": "tsx scripts/validate-and-fix.ts --mode=check --verbose",
+    "validate:no-browser": "tsx scripts/validate-and-fix.ts --mode=check --skip-screenshots",
+    "design:validate": "tsx scripts/design-validation.ts",
+    "design:validate:watch": "tsx scripts/design-validation.ts --watch",
+    "design:report": "tsx scripts/design-validation.ts"
   },
   "dependencies": {
     "@nktkas/hyperliquid": "^0.32.0",
@@ -16,7 +26,7 @@
     "@privy-io/server-auth": "^1.18.0",
     "@supabase/supabase-js": "^2.49.0",
     "jose": "^6.0.0",
-    "next": "15.2.4",
+    "next": "15.5.19",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "viem": "^2.23.0"
@@ -28,7 +38,8 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "eslint": "^9",
-    "eslint-config-next": "15.2.4",
+    "eslint-config-next": "15.5.19",
+    "playwright": "^1.61.0",
     "tailwindcss": "^4",
     "tsx": "^4.19.0",
     "typescript": "^5"

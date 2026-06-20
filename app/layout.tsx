@@ -1,4 +1,5 @@
 import type { Metadata } from "next";
+import { Suspense } from "react";
 import { Providers } from "@/components/providers";
 import { Nav } from "@/components/nav";
 import "./globals.css";
@@ -13,8 +14,12 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body>
         <Providers>
-          <Nav />
-          <main className="max-w-5xl mx-auto px-6 py-8">{children}</main>
+          <Suspense fallback={null}>
+            <Nav />
+          </Suspense>
+          <main className="app-main">
+            <div className="app-content">{children}</div>
+          </main>
         </Providers>
       </body>
     </html>

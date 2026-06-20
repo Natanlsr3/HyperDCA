@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { verifyPrivyToken } from "@/lib/auth/privy";
+import { isServiceDbConfigured } from "@/lib/db/client";
 import {
   closeSchedule,
   getScheduleByIdForUser,
@@ -26,6 +27,16 @@ export async function POST(
   { params }: { params: Promise<{ id: string }> },
 ) {
   try {
+    if (!isServiceDbConfigured()) {
+      return NextResponse.json(
+        {
+          error: "Closing schedules unlocks when Supabase is connected.",
+          code: "DATABASE_NOT_CONFIGURED",
+        },
+        { status: 503 },
+      );
+    }
+
     const { id } = await params;
     const claims = await verifyPrivyToken(req.headers.get("authorization"));
     const user = await getUserByPrivyId(claims.userId);
