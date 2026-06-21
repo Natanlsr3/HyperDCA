@@ -1,0 +1,8 @@
+REMPLIR_ENV_LOCAL.env
+.env.local
+.env*.local
+scripts/
+supabase/
+.claude/
+.agents/
+coach_outputs/
