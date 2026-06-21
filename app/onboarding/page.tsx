@@ -1,7 +1,7 @@
 "use client";
 
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { Suspense, useCallback, useEffect, useState } from "react";
+import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { EIP1193Provider } from "viem";
 import { submitApprovals } from "@/lib/hl/approve-client";
@@ -56,13 +56,18 @@ function OnboardingContent() {
   const [agentAddress, setAgentAddress] = useState<string | null>(null);
   const [approval, setApproval] = useState<ApprovalParams | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [hydrating, setHydrating] = useState(true);
+  const approvalInProgress = useRef(false);
 
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
   const hasExistingAgent = Boolean(agentAddress);
 
   const applyOnboardingState = useCallback((data: OnboardingState & { onboarded?: boolean }) => {
+    // Don't reset state if an approval flow is in progress
+    if (approvalInProgress.current) return;
+
     if (data.onboarded) {
       setStep(3);
       setStatus("Onboarding complete. Deposit USDC on Arbitrum → bridge to HyperLiquid.");
@@ -77,6 +82,7 @@ function OnboardingContent() {
     }
   }, []);
 
+  // Hydrate onboarding state + link wallet on page load
   useEffect(() => {
     if (!authenticated) {
       setHydrating(false);
@@ -88,6 +94,17 @@ function OnboardingContent() {
     (async () => {
       try {
         const token = await getAccessToken();
+
+        // Link embedded wallet to DB every time the page loads (idempotent)
+        const walletAddr = wallets.find((w) => w.walletClientType === "privy")?.address;
+        if (walletAddr) {
+          await fetch("/api/onboarding", {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+            body: JSON.stringify({ action: "link-wallet", mainWallet: walletAddr }),
+          });
+        }
+
         const res = await fetch("/api/onboarding", {
           headers: { Authorization: `Bearer ${token}` },
         });
@@ -97,7 +114,7 @@ function OnboardingContent() {
         applyOnboardingState(data);
       } catch (e) {
         if (!cancelled) {
-          setStatus(e instanceof Error ? e.message : "Failed to load onboarding state");
+          setError(e instanceof Error ? e.message : "Failed to load onboarding state");
         }
       } finally {
         if (!cancelled) setHydrating(false);
@@ -107,12 +124,13 @@ function OnboardingContent() {
     return () => {
       cancelled = true;
     };
-  }, [authenticated, getAccessToken, applyOnboardingState]);
+  }, [authenticated, getAccessToken, applyOnboardingState, wallets]);
 
   async function generateAgent() {
     if (hasExistingAgent) return;
 
     setLoading(true);
+    setError(null);
     try {
       const token = await getAccessToken();
       const res = await fetch("/api/onboarding", {
@@ -134,48 +152,35 @@ function OnboardingContent() {
         setStatus("Click below to sign approveAgent + approveBuilderFee with your wallet.");
       }
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Failed");
+      setError(e instanceof Error ? e.message : "Failed");
     } finally {
       setLoading(false);
     }
   }
 
-  async function fetchApprovalStatus(token: string) {
+  async function authedPost(token: string, action: string, extra?: Record<string, unknown>) {
     const res = await fetch("/api/onboarding", {
       method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({ action: "check-approval-status" }),
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ action, ...extra }),
     });
     const data = await res.json();
     if (data.error) throw new Error(data.error);
-    return data as { agentApproved: boolean; builderApproved: boolean };
+    return data;
   }
 
   async function verifyApprovalWithRetry(token: string) {
-    const maxAttempts = 5;
-    const delayMs = 2000;
+    const maxAttempts = 8;
+    const delayMs = 3000;
     let last: {
       approved?: boolean;
       agentApproved?: boolean;
       builderApproved?: boolean;
-      error?: string;
     } = {};
 
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      const res = await fetch("/api/onboarding", {
-        method: "POST",
-        headers: {
-          Authorization: `Bearer ${token}`,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({ action: "verify-approval" }),
-      });
-      const data = await res.json();
+      const data = await authedPost(token, "verify-approval");
       last = data;
-      if (data.error) throw new Error(data.error);
       if (data.approved) return data;
 
       if (attempt < maxAttempts - 1) {
@@ -194,33 +199,46 @@ function OnboardingContent() {
       .join(" + ");
     throw new Error(
       missing
-        ? `HyperLiquid has not registered ${missing} yet. Wait a moment and retry.`
-        : "HyperLiquid verification failed. Retry in a moment.",
+        ? `HyperLiquid has not registered ${missing} yet. Wait a moment and click "Sign & approve" again.`
+        : "HyperLiquid verification timed out. Wait a moment and retry.",
     );
   }
 
   async function approveOnHL() {
     if (!approval) {
-      setStatus("Generate an agent first.");
+      setError("No approval data available. Refresh the page and try again.");
       return;
     }
     const embedded = embeddedWallet;
     if (!embedded) {
-      setStatus("Wallet not ready yet. Wait a moment and retry.");
+      setError("Wallet not ready yet. Wait a moment and retry.");
       return;
     }
 
     setLoading(true);
+    setError(null);
+    setStatus(null);
+    approvalInProgress.current = true;
+
     try {
       const token = await getAccessToken();
       if (!token) {
-        setStatus("Session expired. Sign in again.");
+        setError("Session expired. Sign in again.");
         return;
       }
-      const onChain = await fetchApprovalStatus(token);
+
+      // Ensure wallet is linked in DB before checking approvals
+      setStatus("Linking wallet…");
+      await authedPost(token, "link-wallet", { mainWallet: embedded.address });
+
+      setStatus("Checking existing approvals on HyperLiquid…");
+      const onChain = await authedPost(token, "check-approval-status") as {
+        agentApproved: boolean;
+        builderApproved: boolean;
+      };
 
       if (onChain.agentApproved && onChain.builderApproved) {
-        setStatus("Approvals already registered on HyperLiquid. Verifying…");
+        setStatus("Approvals already registered. Verifying on-chain…");
         await verifyApprovalWithRetry(token);
         setStep(3);
         setStatus("Onboarding complete. Deposit USDC on Arbitrum → bridge to HyperLiquid.");
@@ -236,7 +254,7 @@ function OnboardingContent() {
         .filter(Boolean)
         .join(" + ");
 
-      setStatus(`Signing ${pending} on HyperLiquid (sign in your wallet)…`);
+      setStatus(`Signing ${pending} — approve in the wallet popup…`);
       const provider = (await embedded.getEthereumProvider()) as unknown as EIP1193Provider;
       await submitApprovals({
         provider,
@@ -250,15 +268,18 @@ function OnboardingContent() {
         skipBuilder,
       });
 
-      setStatus("Verifying approvals on-chain…");
+      setStatus("Signatures submitted. Verifying on-chain…");
       await verifyApprovalWithRetry(token);
 
       setStep(3);
       setStatus("Onboarding complete. Deposit USDC on Arbitrum → bridge to HyperLiquid.");
     } catch (e) {
-      setStatus(e instanceof Error ? e.message : "Approval failed");
+      const msg = e instanceof Error ? e.message : "Approval failed";
+      setError(msg);
+      setStatus(null);
     } finally {
       setLoading(false);
+      approvalInProgress.current = false;
     }
   }
 
@@ -303,7 +324,7 @@ function OnboardingContent() {
     return (
       <div className="max-w-lg mx-auto space-y-6">
         <h1 className="text-2xl font-bold">Onboarding</h1>
-        <p className="text-sm text-zinc-400">Loading your onboarding status…</p>
+        <p className="text-sm text-[var(--text3)]">Loading your onboarding status…</p>
       </div>
     );
   }
@@ -312,9 +333,15 @@ function OnboardingContent() {
     <div className="max-w-lg mx-auto space-y-6">
       <h1 className="text-2xl font-bold">Onboarding</h1>
 
+      {error && (
+        <div className="rounded-[8px] border border-[var(--neg)] bg-[var(--negSoft)] px-4 py-3">
+          <p className="m-0 text-[13px] font-medium text-[var(--neg)]">{error}</p>
+        </div>
+      )}
+
       <div className="card space-y-4">
-        <Step n={1} active={step === 1} title="Create agent key">
-          <p className="text-sm text-zinc-400">
+        <Step n={1} active={step === 1} done={step > 1} title="Create agent key">
+          <p className="text-sm text-[var(--text2)]">
             We generate an API agent wallet (cannot withdraw). It trades on your behalf after one-time approval.
           </p>
           <button
@@ -325,15 +352,15 @@ function OnboardingContent() {
             {hasExistingAgent ? "Agent already created" : "Generate agent"}
           </button>
           {agentAddress && (
-            <p className="text-xs text-zinc-500 break-all">Agent: {agentAddress}</p>
+            <p className="text-xs text-[var(--text3)] break-all">Agent: {agentAddress}</p>
           )}
         </Step>
 
-        <Step n={2} active={step === 2} title="Approve on HyperLiquid">
-          <p className="text-sm text-zinc-400">
+        <Step n={2} active={step === 2} done={step > 2} title="Approve on HyperLiquid">
+          <p className="text-sm text-[var(--text2)]">
             Your wallet will sign two one-time actions —{" "}
-            <code className="text-cyan-400">approveAgent</code> (lets us trade for you) and{" "}
-            <code className="text-cyan-400">approveBuilderFee</code> — submitted directly to
+            <code className="text-[var(--accentText)]">approveAgent</code> (lets us trade for you) and{" "}
+            <code className="text-[var(--accentText)]">approveBuilderFee</code> — submitted directly to
             HyperLiquid. We verify both on-chain before unlocking trading.
           </p>
           <button className="btn" disabled={loading || step !== 2} onClick={approveOnHL}>
@@ -341,8 +368,8 @@ function OnboardingContent() {
           </button>
         </Step>
 
-        <Step n={3} active={step === 3} title="Start investing">
-          <p className="text-sm text-zinc-400">
+        <Step n={3} active={step === 3} done={false} title="Start investing">
+          <p className="text-sm text-[var(--text2)]">
             Pick a basket and set your DCA amount, interval, and leverage dial.
           </p>
           <button className="btn" onClick={() => router.push(returnTo ?? "/baskets")}>
@@ -351,7 +378,9 @@ function OnboardingContent() {
         </Step>
       </div>
 
-      {status && <p className="text-sm text-zinc-400">{status}</p>}
+      {status && (
+        <p className="text-sm font-medium text-[var(--text2)]">{status}</p>
+      )}
     </div>
   );
 }
@@ -359,18 +388,25 @@ function OnboardingContent() {
 function Step({
   n,
   active,
+  done,
   title,
   children,
 }: {
   n: number;
   active: boolean;
+  done: boolean;
   title: string;
   children: React.ReactNode;
 }) {
   return (
     <div className={`space-y-2 ${active ? "" : "opacity-50"}`}>
-      <h3 className="font-medium">
-        {n}. {title}
+      <h3 className="flex items-center gap-2 font-medium">
+        {done ? (
+          <span className="inline-flex h-[20px] w-[20px] items-center justify-center rounded-full bg-[var(--pos)] text-[11px] font-bold text-white">✓</span>
+        ) : (
+          <span className="inline-flex h-[20px] w-[20px] items-center justify-center rounded-full border border-[var(--border)] text-[11px] font-bold text-[var(--text3)]">{n}</span>
+        )}
+        {title}
       </h3>
       {children}
     </div>
