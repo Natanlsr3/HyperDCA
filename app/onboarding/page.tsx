@@ -60,6 +60,7 @@ function OnboardingContent() {
   const [loading, setLoading] = useState(false);
   const [hydrating, setHydrating] = useState(true);
   const approvalInProgress = useRef(false);
+  const hydrationDone = useRef(false);
 
   const embeddedWallet = wallets.find((w) => w.walletClientType === "privy");
   const hasExistingAgent = Boolean(agentAddress);
@@ -82,12 +83,16 @@ function OnboardingContent() {
     }
   }, []);
 
-  // Hydrate onboarding state + link wallet on page load
+  // Hydrate onboarding state + link wallet on page load (runs ONCE)
+  // We intentionally exclude `wallets` from deps to prevent re-fires
+  // during the signing flow when Privy updates wallet state.
   useEffect(() => {
-    if (!authenticated) {
+    if (!authenticated || hydrationDone.current) {
       setHydrating(false);
       return;
     }
+    // Skip hydration entirely if an approval flow is in progress
+    if (approvalInProgress.current) return;
 
     let cancelled = false;
 
@@ -96,6 +101,7 @@ function OnboardingContent() {
         const token = await getAccessToken();
 
         // Link embedded wallet to DB every time the page loads (idempotent)
+        // Use wallets ref at call-time to get the latest value
         const walletAddr = wallets.find((w) => w.walletClientType === "privy")?.address;
         if (walletAddr) {
           await fetch("/api/onboarding", {
@@ -112,6 +118,7 @@ function OnboardingContent() {
         if (cancelled) return;
         if (data.error) throw new Error(data.error);
         applyOnboardingState(data);
+        hydrationDone.current = true;
       } catch (e) {
         if (!cancelled) {
           setError(e instanceof Error ? e.message : "Failed to load onboarding state");
@@ -124,7 +131,8 @@ function OnboardingContent() {
     return () => {
       cancelled = true;
     };
-  }, [authenticated, getAccessToken, applyOnboardingState, wallets]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [authenticated, getAccessToken, applyOnboardingState]);
 
   async function generateAgent() {
     if (hasExistingAgent) return;
@@ -247,34 +255,45 @@ function OnboardingContent() {
 
       const skipAgent = onChain.agentApproved;
       const skipBuilder = onChain.builderApproved;
-      const pending = [
-        !skipAgent && "approveAgent",
-        !skipBuilder && "approveBuilderFee",
-      ]
-        .filter(Boolean)
-        .join(" + ");
 
-      setStatus(`Signing ${pending} — approve in the wallet popup…`);
+      // Step-by-step signing with granular status
       const provider = (await embedded.getEthereumProvider()) as unknown as EIP1193Provider;
-      await submitApprovals({
-        provider,
-        account: embedded.address as `0x${string}`,
-        isTestnet: approval.isTestnet,
-        agentAddress: approval.agentAddress,
-        agentName: approval.agentName,
-        builder: approval.builder,
-        maxFeeRate: approval.maxFeeRate,
-        skipAgent,
-        skipBuilder,
-      });
 
-      setStatus("Signatures submitted. Verifying on-chain…");
+      if (!skipAgent) {
+        setStatus("Step 1/2 — Signing approveAgent. Approve in the wallet popup…");
+      } else if (!skipBuilder) {
+        setStatus("Signing approveBuilderFee. Approve in the wallet popup…");
+      }
+
+      try {
+        await submitApprovals({
+          provider,
+          account: embedded.address as `0x${string}`,
+          isTestnet: approval.isTestnet,
+          agentAddress: approval.agentAddress,
+          agentName: approval.agentName,
+          builder: approval.builder,
+          maxFeeRate: approval.maxFeeRate,
+          skipAgent,
+          skipBuilder,
+        });
+      } catch (signError) {
+        // If the user rejected the popup or signing failed, show a clear message
+        const msg = signError instanceof Error ? signError.message : "Signing failed";
+        if (msg.includes("User rejected") || msg.includes("user rejected") || msg.includes("denied")) {
+          throw new Error("You rejected the signing request. Click the button to try again.");
+        }
+        throw signError;
+      }
+
+      setStatus("Signatures submitted. Verifying on-chain (this can take up to 30 seconds)…");
       await verifyApprovalWithRetry(token);
 
       setStep(3);
       setStatus("Onboarding complete. Deposit USDC on Arbitrum → bridge to HyperLiquid.");
     } catch (e) {
       const msg = e instanceof Error ? e.message : "Approval failed";
+      console.error("[HyperDCA onboarding] Approval error:", e);
       setError(msg);
       setStatus(null);
     } finally {
@@ -366,6 +385,14 @@ function OnboardingContent() {
           <button className="btn" disabled={loading || step !== 2} onClick={approveOnHL}>
             {loading ? "Approving…" : "Sign & approve on HyperLiquid"}
           </button>
+          {step === 2 && status && (
+            <p className="mt-2 text-[13px] font-medium text-[var(--accentText)]">{status}</p>
+          )}
+          {step === 2 && error && (
+            <div className="mt-2 rounded-[8px] border border-[var(--neg)] bg-[var(--negSoft)] px-3 py-2">
+              <p className="m-0 text-[13px] font-medium text-[var(--neg)]">{error}</p>
+            </div>
+          )}
         </Step>
 
         <Step n={3} active={step === 3} done={false} title="Start investing">
