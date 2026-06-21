@@ -2,6 +2,7 @@
 
 import { usePrivy, useWallets } from "@privy-io/react-auth";
 import { Suspense, useCallback, useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
 import type { EIP1193Provider } from "viem";
 import { submitApprovals } from "@/lib/hl/approve-client";
@@ -381,6 +382,12 @@ function OnboardingContent() {
             <code className="text-[var(--accentText)]">approveAgent</code> (lets us trade for you) and{" "}
             <code className="text-[var(--accentText)]">approveBuilderFee</code> — submitted directly to
             HyperLiquid. We verify both on-chain before unlocking trading.
+          </p>
+          <p className="text-[12.5px] text-[var(--text3)]">
+            You need funds in your wallet to sign. If your wallet is empty,{" "}
+            <Link href="/dashboard?showDeposit=true" className="font-semibold text-[var(--accentText)] underline">
+              deposit USDC first
+            </Link>.
           </p>
           <button className="btn" disabled={loading || step !== 2} onClick={approveOnHL}>
             {loading ? "Approving…" : "Sign & approve on HyperLiquid"}

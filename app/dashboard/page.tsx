@@ -1,8 +1,9 @@
 "use client";
 
 import { usePrivy, useWallets } from "@privy-io/react-auth";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { AuthUnavailable } from "@/components/auth-unavailable";
 import { DepositForm } from "@/components/deposit-form";
 import { WithdrawForm } from "@/components/withdraw-form";
@@ -52,16 +53,24 @@ function displayCoin(coin: string) {
 
 export default function DashboardPage() {
   if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <AuthUnavailable />;
-  return <DashboardContent />;
+  return (
+    <Suspense fallback={<div className="text-[var(--text3)]">Loading portfolio...</div>}>
+      <DashboardContent />
+    </Suspense>
+  );
 }
 
 function DashboardContent() {
   const { authenticated, getAccessToken, login } = usePrivy();
   const { wallets } = useWallets();
+  const searchParams = useSearchParams();
+  const showDeposit = searchParams.get("showDeposit") === "true";
   const address = wallets.find((w) => w.walletClientType === "privy")?.address ?? null;
   const { usdc, eth, loading: balLoading, refresh: refreshBalances } = useArbitrumBalances(address);
+  const walletCardRef = useRef<HTMLDivElement>(null);
 
   const [copied, setCopied] = useState(false);
+  const [depositHighlight, setDepositHighlight] = useState(showDeposit);
   const [positions, setPositions] = useState<Position[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [followedBaskets, setFollowedBaskets] = useState<FollowedBasket[]>([]);
@@ -160,6 +169,18 @@ function DashboardContent() {
     void refreshPortfolio();
   }, [authenticated, refreshPortfolio]);
 
+  // Auto-scroll to wallet card when coming from onboarding deposit link
+  useEffect(() => {
+    if (showDeposit && walletCardRef.current) {
+      setTimeout(() => {
+        walletCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
+      }, 400);
+      // Remove highlight after 4 seconds
+      const timer = setTimeout(() => setDepositHighlight(false), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [showDeposit]);
+
   if (!authenticated) {
     return (
       <div className="mx-auto max-w-[640px] space-y-6">
@@ -216,7 +237,17 @@ function DashboardContent() {
       )}
 
       {/* Wallet card */}
-      <div className="card space-y-3">
+      <div ref={walletCardRef} className={`card space-y-3 transition-all duration-500 ${depositHighlight ? "ring-2 ring-[var(--accent)] ring-offset-2" : ""}`}>
+        {showDeposit && (
+          <div className="flex items-center justify-between rounded-[8px] bg-[var(--accentSoft)] px-3 py-2">
+            <p className="m-0 text-[13px] font-medium text-[var(--accentText)]">
+              Deposit USDC + a little ETH (gas) to your wallet, then go back to complete onboarding.
+            </p>
+            <Link href="/onboarding" className="btn-secondary ml-3 shrink-0 px-3 py-[5px] text-[12px] no-underline">
+              Back to onboarding
+            </Link>
+          </div>
+        )}
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <p className="label">Your HyperLiquid account (master wallet)</p>
