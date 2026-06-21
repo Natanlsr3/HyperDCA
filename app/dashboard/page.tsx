@@ -10,9 +10,6 @@ import { WithdrawForm } from "@/components/withdraw-form";
 import { SendForm } from "@/components/send-form";
 import { ExportKeyButton } from "@/components/export-key-button";
 import { useArbitrumBalances } from "@/lib/wallet/arbitrum-balances";
-import { PeriodSelector } from "@/components/period-selector";
-import { PerformanceChart } from "@/components/baskets/charts";
-import { makeHistorySeries, periodLabel, seriesDelta, type CustomRange, type HistoryPeriod } from "@/lib/market/history";
 
 interface Position {
   coin: string;
@@ -85,8 +82,6 @@ function DashboardContent() {
   const [portfolioMessage, setPortfolioMessage] = useState<string | null>(null);
   const [schedulesError, setSchedulesError] = useState<string | null>(null);
   const [onboarded, setOnboarded] = useState(true);
-  const [period, setPeriod] = useState<HistoryPeriod>("1m");
-  const [customRange, setCustomRange] = useState<CustomRange>({});
 
   // Compute real allocation from positions
   const realAllocation = useMemo(() => {
@@ -101,12 +96,6 @@ function DashboardContent() {
       }))
       .sort((a, b) => b.weight - a.weight);
   }, [positions]);
-
-  const portfolioSeries = useMemo(
-    () => makeHistorySeries("portfolio", period, customRange, 0.18),
-    [customRange, period],
-  );
-  const portfolioDelta = seriesDelta(portfolioSeries);
 
   const refreshPortfolio = useCallback(async () => {
     setHlLoading(true);
@@ -236,79 +225,69 @@ function DashboardContent() {
         </div>
       )}
 
-      {/* Wallet card */}
-      <div ref={walletCardRef} className={`card space-y-3 transition-all duration-500 ${depositHighlight ? "ring-2 ring-[var(--accent)] ring-offset-2" : ""}`}>
+      {/* Wallet */}
+      <div ref={walletCardRef} className={`card transition-all duration-500 ${depositHighlight ? "ring-2 ring-[var(--accent)] ring-offset-2" : ""}`}>
         {showDeposit && (
-          <div className="flex items-center justify-between rounded-[8px] bg-[var(--accentSoft)] px-3 py-2">
+          <div className="mb-3 flex items-center justify-between rounded-[8px] bg-[var(--accentSoft)] px-3 py-2">
             <p className="m-0 text-[13px] font-medium text-[var(--accentText)]">
-              Deposit USDC + a little ETH (gas) to your wallet, then go back to complete onboarding.
+              Deposit USDC + ETH for gas, then go back to finish onboarding.
             </p>
             <Link href="/onboarding" className="btn-secondary ml-3 shrink-0 px-3 py-[5px] text-[12px] no-underline">
-              Back to onboarding
+              Back to setup
             </Link>
           </div>
         )}
-        <div className="flex items-center justify-between gap-3 flex-wrap">
-          <div>
-            <p className="label">Your HyperLiquid account (master wallet)</p>
-            <p className="mono text-[13px] text-[var(--text)] break-all">{address ?? "Creating wallet..."}</p>
-          </div>
+
+        <div className="flex items-center justify-between gap-2">
+          <p className="label m-0">Wallet</p>
           {address && (
             <button
-              className="btn-secondary px-3 py-1 text-[12px]"
+              className="mono inline-flex items-center gap-1.5 text-[12px] text-[var(--text2)] hover:text-[var(--text)]"
               onClick={() => {
                 navigator.clipboard.writeText(address);
                 setCopied(true);
                 setTimeout(() => setCopied(false), 1500);
               }}
             >
-              {copied ? "Copied" : "Copy"}
+              {address.slice(0, 6)}...{address.slice(-4)}
+              <span className="text-[11px]">{copied ? "Copied" : "Copy"}</span>
             </button>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-3">
-          <div>
-            <p className="label">USDC on Arbitrum One</p>
-            <p className="text-[18px] font-semibold text-[var(--text)]">
-              {balLoading && usdc === null ? "..." : `${(usdc ?? 0).toFixed(2)} USDC`}
+
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <div className="rounded-[8px] bg-[var(--surface2)] px-3 py-2">
+            <p className="label m-0 text-[10px]">USDC (Arbitrum)</p>
+            <p className="mono m-0 text-[16px] font-semibold text-[var(--text)]">
+              {balLoading && usdc === null ? "..." : `${(usdc ?? 0).toFixed(2)}`}
             </p>
           </div>
-          <div>
-            <p className="label">ETH (for gas)</p>
-            <p className={`text-[18px] font-semibold ${eth !== null && eth < 0.00005 ? "text-[var(--neg)]" : "text-[var(--text)]"}`}>
-              {balLoading && eth === null ? "..." : `${(eth ?? 0).toFixed(5)} ETH`}
+          <div className="rounded-[8px] bg-[var(--surface2)] px-3 py-2">
+            <p className="label m-0 text-[10px]">ETH (gas)</p>
+            <p className={`mono m-0 text-[16px] font-semibold ${eth !== null && eth < 0.00005 ? "text-[var(--neg)]" : "text-[var(--text)]"}`}>
+              {balLoading && eth === null ? "..." : `${(eth ?? 0).toFixed(5)}`}
             </p>
           </div>
         </div>
+
         {eth !== null && eth < 0.00005 && (
-          <p className="text-[12px] text-[var(--neg)]">
-            No ETH for gas on Arbitrum One. Send ~$1 of ETH to the address above to enable deposits.
+          <p className="m-0 mt-2 text-[12px] text-[var(--neg)]">
+            Send ~$1 of ETH on Arbitrum to enable deposits.
           </p>
         )}
-        <div className="text-[12px] leading-[1.6] text-[var(--text3)] border-t border-[var(--border)] pt-3">
-          <p className="font-medium text-[var(--text2)] mb-1">How to add funds</p>
-          1. Send <span className="text-[var(--text)]">USDC on Arbitrum</span> (plus a little ETH for gas) to the address above.<br />
-          2. Then use <span className="text-[var(--text)]">Deposit to HyperLiquid</span> below to move USDC into your HL trading account.
-        </div>
-        <DepositForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
-        <WithdrawForm withdrawable={withdrawable} hlLoading={hlLoading} isTestnet={hlTestnet} refreshHlBalance={refreshPortfolio} refreshArbitrumBalances={refreshBalances} />
-        <SendForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
-        <ExportKeyButton />
-      </div>
 
-      {/* Performance chart */}
-      <section className="card p-[22px]">
-        <div className="mb-[16px] flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <h2 className="m-0 text-[18px] font-bold tracking-[-0.01em] text-[var(--text)]">Performance</h2>
-            <p className="mt-2 text-[12px] font-semibold text-[var(--text3)]">
-              {periodLabel(period, customRange)} · <span className={portfolioDelta >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}>{portfolioDelta >= 0 ? "+" : ""}{(portfolioDelta * 100).toFixed(1)}%</span>
-            </p>
-          </div>
-          <PeriodSelector period={period} customRange={customRange} onPeriodChange={setPeriod} onCustomRangeChange={setCustomRange} />
+        <div className="mt-3 space-y-2">
+          <DepositForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
+          <WithdrawForm withdrawable={withdrawable} hlLoading={hlLoading} isTestnet={hlTestnet} refreshHlBalance={refreshPortfolio} refreshArbitrumBalances={refreshBalances} />
+          <details className="group">
+            <summary className="cursor-pointer text-[12px] font-medium text-[var(--text3)] hover:text-[var(--text2)]">More options</summary>
+            <div className="mt-2 space-y-2">
+              <SendForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
+              <ExportKeyButton />
+            </div>
+          </details>
         </div>
-        <PerformanceChart series={portfolioSeries} />
-      </section>
+      </div>
 
       {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
