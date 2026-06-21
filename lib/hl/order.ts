@@ -1,3 +1,4 @@
+import { createHash, randomBytes } from "node:crypto";
 import type { ExchangeClient } from "@nktkas/hyperliquid";
 import { formatPrice, formatSize } from "@nktkas/hyperliquid/utils";
 import type { PrivateKeyAccount } from "viem/accounts";
@@ -38,15 +39,37 @@ export function computeOrderSize(
   return Math.floor((notional / price) * factor) / factor;
 }
 
+/**
+ * Resolve a spot swap pair (e.g. "@230" or "BASE/QUOTE") to its HL asset id.
+ * Spot asset id = 10000 + spot market index (HL convention; "@230" => 10230).
+ * Tries the SymbolConverter (BASE/QUOTE form) first, then the "@<index>" form.
+ */
+export function resolveSpotAssetId(
+  converter: Awaited<ReturnType<typeof createSymbolConverter>>,
+  swapPair: string,
+): number | undefined {
+  const direct = converter.getAssetId(swapPair);
+  if (direct !== undefined) return direct;
+  const m = /^@(\d+)$/.exec(swapPair.trim());
+  if (m) return 10000 + Number(m[1]);
+  return undefined;
+}
+
 export async function swapUsdcToUsdh(
   exchange: ExchangeClient,
+  converter: Awaited<ReturnType<typeof createSymbolConverter>>,
+  swapPair: string,
   amount: number,
 ): Promise<{ status: "filled" | "error"; size?: string; price?: string; error?: string }> {
+  const assetId = resolveSpotAssetId(converter, swapPair);
+  if (assetId === undefined) {
+    return { status: "error", error: `cannot resolve swap pair ${swapPair}` };
+  }
   const sz = Math.round(Math.max(amount + 1, 11) * 100) / 100;
   const result = await exchange.order({
     orders: [
       {
-        a: 10107,
+        a: assetId,
         b: true,
         p: "1.02",
         s: String(sz),
@@ -57,7 +80,7 @@ export async function swapUsdcToUsdh(
     grouping: "na",
   });
 
-  return parseOrderResponse(result, "@230");
+  return parseOrderResponse(result, swapPair);
 }
 
 function parseOrderResponse(
@@ -157,7 +180,7 @@ export async function executeTradeForAsset(
   const exchange = createExchangeClient(agentKey, dexNames);
 
   if (asset.collateral === "USDH" && asset.swap_pair) {
-    const swap = await swapUsdcToUsdh(exchange, marginUsd);
+    const swap = await swapUsdcToUsdh(exchange, converter, asset.swap_pair, marginUsd);
     if (swap.status !== "filled") {
       return { coin: asset.coin, status: "error", error: `USDH swap failed: ${swap.error}` };
     }
@@ -220,7 +243,11 @@ export async function closePositionForAsset(
   return parseOrderResponse(result, asset.coin);
 }
 
+/**
+ * Build a unique HL client order id (16 bytes / 32 hex + "0x").
+ */
 export function makeCloid(prefix: string, scheduleId: string, coin: string): string {
-  const raw = `${prefix}-${scheduleId.slice(0, 8)}-${coin}-${Date.now()}`;
-  return `0x${Buffer.from(raw).toString("hex").slice(0, 32).padEnd(32, "0")}`;
+  const seed = `${prefix}:${scheduleId}:${coin}:${Date.now()}:${randomBytes(8).toString("hex")}`;
+  const hex = createHash("sha256").update(seed).digest("hex").slice(0, 32);
+  return `0x${hex}`;
 }

@@ -36,6 +36,11 @@ function hexToRgb(hex: string) {
   return `${(bigint >> 16) & 255}, ${(bigint >> 8) & 255}, ${bigint & 255}`;
 }
 
+function displayCoin(coin: string) {
+  const idx = coin.indexOf(":");
+  return idx >= 0 ? coin.slice(idx + 1) : coin;
+}
+
 function sparkPoints(seed: number, roi = 0) {
   return Array.from({ length: 18 }, (_, index) => {
     const x = (index / 17) * 120;
@@ -76,7 +81,8 @@ export function BasketCard({ basket }: { basket: Basket }) {
 
       <div className="flex flex-wrap gap-[6px]">
         {basket.basket_assets.slice(0, 5).map((asset) => {
-          const color = ASSET_COLORS[asset.coin] ?? "#64748B";
+          const ticker = displayCoin(asset.coin);
+          const color = ASSET_COLORS[ticker] ?? "#64748B";
           return (
             <span
               key={`${asset.dex}:${asset.coin}`}
@@ -87,7 +93,7 @@ export function BasketCard({ basket }: { basket: Basket }) {
                 borderColor: `rgba(${hexToRgb(color)}, 0.30)`,
               }}
             >
-              {asset.coin}
+              {ticker}
               <span className="opacity-65">{Math.round(Number(asset.weight) * 100)}%</span>
             </span>
           );

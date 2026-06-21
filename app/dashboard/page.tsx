@@ -1,16 +1,21 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
-import { useEffect, useMemo, useState } from "react";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { AuthUnavailable } from "@/components/auth-unavailable";
-import { readJsonResponse } from "@/lib/http/client";
+import { DepositForm } from "@/components/deposit-form";
+import { WithdrawForm } from "@/components/withdraw-form";
+import { SendForm } from "@/components/send-form";
+import { ExportKeyButton } from "@/components/export-key-button";
+import { useArbitrumBalances } from "@/lib/wallet/arbitrum-balances";
 import { PeriodSelector } from "@/components/period-selector";
 import { PerformanceChart } from "@/components/baskets/charts";
 import { makeHistorySeries, periodLabel, seriesDelta, type CustomRange, type HistoryPeriod } from "@/lib/market/history";
 
 interface Position {
   coin: string;
+  dex: string;
   szi: number;
   entryPx: number;
   positionValue: number;
@@ -92,18 +97,29 @@ export default function DashboardPage() {
 
 function DashboardContent() {
   const { authenticated, getAccessToken, login } = usePrivy();
+  const { wallets } = useWallets();
+  const address = wallets.find((w) => w.walletClientType === "privy")?.address ?? null;
+  const { usdc, eth, loading: balLoading, refresh: refreshBalances } = useArbitrumBalances(address);
+
+  const [copied, setCopied] = useState(false);
   const [positions, setPositions] = useState<Position[]>([]);
   const [schedules, setSchedules] = useState<Schedule[]>([]);
   const [followedBaskets, setFollowedBaskets] = useState<FollowedBasket[]>([]);
   const [mirrorHistory, setMirrorHistory] = useState<MirrorExecution[]>([]);
   const [accountValue, setAccountValue] = useState(0);
+  const [withdrawable, setWithdrawable] = useState<number | null>(null);
+  const [allTimePnl, setAllTimePnl] = useState<number | null>(null);
+  const [hlTestnet, setHlTestnet] = useState(false);
+  const [hlLoading, setHlLoading] = useState(false);
   const [carryPct, setCarryPct] = useState<number | null>(null);
   const [guardrail, setGuardrail] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [demoNotice, setDemoNotice] = useState<string | null>(null);
+  const [portfolioMessage, setPortfolioMessage] = useState<string | null>(null);
+  const [schedulesError, setSchedulesError] = useState<string | null>(null);
+  const [onboarded, setOnboarded] = useState(true);
   const [activePortfolioId, setActivePortfolioId] = useState(strategyPortfolios[0].id);
   const [period, setPeriod] = useState<HistoryPeriod>("1m");
   const [customRange, setCustomRange] = useState<CustomRange>({});
+
   const activePortfolio = useMemo(
     () => strategyPortfolios.find((portfolio) => portfolio.id === activePortfolioId) ?? strategyPortfolios[0],
     [activePortfolioId],
@@ -116,42 +132,66 @@ function DashboardContent() {
   const displayedAccountValue = accountValue > 0 ? accountValue : activePortfolio.accountValue;
   const displayedCarry = carryPct ?? activePortfolio.carryPct;
 
-  useEffect(() => {
-    if (!authenticated) return;
-    (async () => {
-      try {
-        const token = await getAccessToken();
-        const [portRes, schedRes] = await Promise.all([
-          fetch("/api/portfolio", { headers: { Authorization: `Bearer ${token}` } }),
-          fetch("/api/schedules", { headers: { Authorization: `Bearer ${token}` } }),
-        ]);
-        const port = await readJsonResponse<{
-          error?: string;
-          demo?: boolean;
-          message?: string;
-          positions?: Position[];
-          accountValue?: number;
-          guardrailFlagged?: boolean;
-          schedules?: Schedule[];
-          baskets_followed?: FollowedBasket[];
-          mirror_history?: MirrorExecution[];
-          carry?: { basketAnnualizedPct: number };
-        }>(portRes);
-        const sched = await readJsonResponse<{ schedules?: Schedule[] }>(schedRes);
-        if (port.error) throw new Error(port.error);
-        setDemoNotice(port.demo ? port.message ?? "Portfolio unlocks when Supabase is connected." : null);
+  const refreshPortfolio = useCallback(async () => {
+    setHlLoading(true);
+    setPortfolioMessage(null);
+    setSchedulesError(null);
+    try {
+      const token = await getAccessToken();
+      const [portRes, schedRes, onboardRes] = await Promise.all([
+        fetch("/api/portfolio", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/schedules", { headers: { Authorization: `Bearer ${token}` } }),
+        fetch("/api/onboarding", { headers: { Authorization: `Bearer ${token}` } }),
+      ]);
+      const port = await portRes.json();
+      const sched = await schedRes.json();
+      const onboard = await onboardRes.json();
+
+      if (port.error) {
+        if (portRes.status === 400 && port.error === "Wallet not linked") {
+          setPortfolioMessage("Wallet not linked yet — HyperLiquid balances and positions will appear after setup.");
+        } else {
+          setPortfolioMessage("HyperLiquid data is temporarily unavailable.");
+        }
+        setPositions([]);
+        setAccountValue(0);
+        setWithdrawable(null);
+        setAllTimePnl(null);
+        setCarryPct(null);
+        setGuardrail(false);
+      } else {
         setPositions(port.positions ?? []);
         setAccountValue(port.accountValue ?? 0);
+        setWithdrawable(port.withdrawable ?? 0);
+        setAllTimePnl(typeof port.allTimePnl === "number" ? port.allTimePnl : null);
+        setHlTestnet(Boolean(port.isTestnet));
         setGuardrail(port.guardrailFlagged ?? false);
-        setSchedules(sched.schedules ?? []);
         setFollowedBaskets(port.baskets_followed ?? []);
         setMirrorHistory(port.mirror_history ?? []);
         if (port.carry) setCarryPct(port.carry.basketAnnualizedPct);
-      } catch (e) {
-        setError(e instanceof Error ? e.message : "Failed to load");
       }
-    })();
-  }, [authenticated, getAccessToken]);
+
+      if (sched.error) {
+        setSchedulesError(sched.error);
+        setSchedules([]);
+      } else {
+        setSchedules(sched.schedules ?? []);
+      }
+
+      if (!onboard.error) {
+        setOnboarded(Boolean(onboard.onboarded));
+      }
+    } catch {
+      setPortfolioMessage("Failed to refresh dashboard data.");
+    } finally {
+      setHlLoading(false);
+    }
+  }, [getAccessToken]);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    void refreshPortfolio();
+  }, [authenticated, refreshPortfolio]);
 
   if (!authenticated) {
     return (
@@ -177,18 +217,91 @@ function DashboardContent() {
           ))}
         </select>
       </div>
-      {demoNotice && (
-        <div className="card border-amber-200 bg-amber-50 text-amber-900">
-          <p className="font-semibold">Demo database mode</p>
-          <p className="mt-1 text-sm">{demoNotice}</p>
+
+      {!onboarded && (
+        <div className="card border-amber-800 bg-amber-950/30 text-amber-200 text-sm">
+          Account setup incomplete — approve your agent on HyperLiquid before schedules can execute.{" "}
+          <Link href="/onboarding" className="text-amber-400 underline">
+            Complete setup
+          </Link>
         </div>
       )}
-      {error && <p className="text-red-400">{error}</p>}
-      {guardrail && (
+
+      {portfolioMessage && (
+        <p className="text-zinc-500 text-sm">{portfolioMessage}</p>
+      )}
+
+      {guardrail && positions.length > 0 && (
         <div className="card border-red-800 bg-red-950/30 text-red-300">
           Liquidation guardrail triggered — review leverage and margin.
         </div>
       )}
+
+      <div className="card space-y-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <div>
+            <p className="label">Your HyperLiquid account (master wallet)</p>
+            <p className="font-mono text-sm break-all">{address ?? "Creating wallet..."}</p>
+          </div>
+          {address && (
+            <button
+              className="text-xs border border-zinc-700 rounded px-3 py-1 text-zinc-300"
+              onClick={() => {
+                navigator.clipboard.writeText(address);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              }}
+            >
+              {copied ? "Copied" : "Copy"}
+            </button>
+          )}
+        </div>
+        <div className="grid grid-cols-2 gap-3 border-t border-zinc-800 pt-3">
+          <div>
+            <p className="label">USDC on Arbitrum One</p>
+            <p className="text-lg font-semibold">
+              {balLoading && usdc === null ? "..." : `${(usdc ?? 0).toFixed(2)} USDC`}
+            </p>
+          </div>
+          <div>
+            <p className="label">ETH (for gas)</p>
+            <p className={`text-lg font-semibold ${eth !== null && eth < 0.00005 ? "text-red-400" : ""}`}>
+              {balLoading && eth === null ? "..." : `${(eth ?? 0).toFixed(5)} ETH`}
+            </p>
+          </div>
+        </div>
+        {eth !== null && eth < 0.00005 && (
+          <p className="text-xs text-red-400">
+            No ETH for gas on Arbitrum One. Sending USDC to HyperLiquid is paid by you and needs a little ETH — send ~$1 of ETH to the address above to enable deposits.
+          </p>
+        )}
+        <div className="text-xs text-zinc-500 leading-relaxed border-t border-zinc-800 pt-3">
+          <p className="text-zinc-400 font-medium mb-1">How to add funds</p>
+          1. Send <span className="text-zinc-300">USDC on Arbitrum</span> (plus a little ETH for gas) to the address above — from a CEX withdrawal to Arbitrum, or by bridging from another chain.<br />
+          2. Then use <span className="text-zinc-300">Deposit to HyperLiquid</span> below to move that USDC into your HL trading account. Your balance updates once it arrives.<br />
+          <span className="text-zinc-600">This wallet is managed in-app, so deposits happen here (not on app.hyperliquid.xyz). HyperLiquid&apos;s bridge is Arbitrum &harr; HL; trading is gas-free.</span>
+        </div>
+        <DepositForm
+          usdc={usdc}
+          eth={eth}
+          balLoading={balLoading}
+          refreshBalances={refreshBalances}
+        />
+        <WithdrawForm
+          withdrawable={withdrawable}
+          hlLoading={hlLoading}
+          isTestnet={hlTestnet}
+          refreshHlBalance={refreshPortfolio}
+          refreshArbitrumBalances={refreshBalances}
+        />
+        <SendForm
+          usdc={usdc}
+          eth={eth}
+          balLoading={balLoading}
+          refreshBalances={refreshBalances}
+        />
+        <ExportKeyButton />
+      </div>
 
       <section className="card p-[22px]">
         <div className="mb-[16px] flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
@@ -204,14 +317,34 @@ function DashboardContent() {
         <PerformanceChart series={portfolioSeries} />
       </section>
 
-      <div className="grid sm:grid-cols-3 gap-4">
+      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="card">
           <p className="label">Account value</p>
           <p className="text-2xl font-semibold">${displayedAccountValue.toFixed(2)}</p>
+          {withdrawable !== null && (
+            <p className="text-xs text-zinc-500 mt-1">
+              Withdrawable: {hlLoading ? "..." : `$${withdrawable.toFixed(2)}`}
+            </p>
+          )}
         </div>
         <div className="card">
-          <p className="label">Strategy assets</p>
-          <p className="text-2xl font-semibold">{activePortfolio.positions.length}</p>
+          <p className="label">All-time PnL</p>
+          <p
+            className={`text-2xl font-semibold ${
+              allTimePnl === null ? "" : allTimePnl >= 0 ? "text-green-400" : "text-red-400"
+            }`}
+          >
+            {hlLoading && allTimePnl === null
+              ? "..."
+              : allTimePnl === null
+                ? "—"
+                : `${allTimePnl >= 0 ? "+" : "-"}$${Math.abs(allTimePnl).toFixed(2)}`}
+          </p>
+          <p className="text-xs text-zinc-500 mt-1">Trading only (excl. deposits/withdrawals)</p>
+        </div>
+        <div className="card">
+          <p className="label">Open positions</p>
+          <p className="text-2xl font-semibold">{positions.length}</p>
         </div>
         <div className="card">
           <p className="label">Est. carry (if set)</p>
@@ -252,11 +385,12 @@ function DashboardContent() {
                   <th>Value</th>
                   <th>uPnL</th>
                   <th>Liq px</th>
+                  <th></th>
                 </tr>
               </thead>
               <tbody>
                 {positions.map((p) => (
-                  <tr key={p.coin} className="border-t border-zinc-800">
+                  <tr key={`${p.dex}:${p.coin}`} className="border-t border-zinc-800">
                     <td className="py-2">{p.coin}</td>
                     <td>{p.szi}</td>
                     <td>${p.entryPx.toFixed(2)}</td>
@@ -265,6 +399,14 @@ function DashboardContent() {
                       ${p.unrealizedPnl.toFixed(2)}
                     </td>
                     <td>{p.liquidationPx?.toFixed(2) ?? "—"}</td>
+                    <td className="text-right">
+                      <ClosePositionButton
+                        coin={p.coin}
+                        dex={p.dex}
+                        getAccessToken={getAccessToken}
+                        onClosed={refreshPortfolio}
+                      />
+                    </td>
                   </tr>
                 ))}
               </tbody>
@@ -280,17 +422,23 @@ function DashboardContent() {
             + New schedule
           </Link>
         </div>
-        {schedules.map((s) => (
-          <div key={s.id} className="card flex justify-between items-center">
-            <div>
-              <p className="font-medium">{s.baskets?.name}</p>
-              <p className="text-sm text-zinc-500">
-                ${s.amount_usd}/cycle · {s.leverage}x · {s.status}
-              </p>
+        {schedulesError ? (
+          <p className="text-red-400 text-sm">{schedulesError}</p>
+        ) : schedules.length === 0 ? (
+          <p className="text-zinc-500 text-sm">No active schedules.</p>
+        ) : (
+          schedules.map((s) => (
+            <div key={s.id} className="card flex justify-between items-center">
+              <div>
+                <p className="font-medium">{s.baskets?.name}</p>
+                <p className="text-sm text-zinc-500">
+                  ${s.amount_usd}/cycle · {s.leverage}x · {s.status}
+                </p>
+              </div>
+              <CloseButton scheduleId={s.id} getAccessToken={getAccessToken} onClosed={refreshPortfolio} />
             </div>
-            <CloseButton scheduleId={s.id} getAccessToken={getAccessToken} />
-          </div>
-        ))}
+          ))
+        )}
       </section>
 
       <section className="space-y-3">
@@ -338,32 +486,91 @@ function DashboardContent() {
   );
 }
 
-function CloseButton({
-  scheduleId,
+function ClosePositionButton({
+  coin,
+  dex,
   getAccessToken,
+  onClosed,
 }: {
-  scheduleId: string;
+  coin: string;
+  dex: string;
   getAccessToken: () => Promise<string | null>;
+  onClosed: () => void;
 }) {
   const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   async function close() {
     setLoading(true);
+    setError(null);
     try {
       const token = await getAccessToken();
-      await fetch(`/api/schedules/${scheduleId}/close`, {
+      const res = await fetch("/api/positions/close", {
         method: "POST",
-        headers: { Authorization: `Bearer ${token}` },
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ coin, dex }),
       });
-      window.location.reload();
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to close position");
+      setTimeout(onClosed, 2500);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to close");
     } finally {
       setLoading(false);
     }
   }
 
   return (
-    <button className="text-sm text-red-400 border border-red-900 rounded px-3 py-1" disabled={loading} onClick={close}>
-      Close basket
-    </button>
+    <span className="inline-flex flex-col items-end">
+      <button
+        className="text-xs text-red-400 border border-red-900 rounded px-2 py-1 disabled:opacity-50"
+        disabled={loading}
+        onClick={close}
+      >
+        {loading ? "Closing..." : "Close"}
+      </button>
+      {error && <span className="text-[10px] text-red-400 mt-0.5">{error}</span>}
+    </span>
+  );
+}
+
+function CloseButton({
+  scheduleId,
+  getAccessToken,
+  onClosed,
+}: {
+  scheduleId: string;
+  getAccessToken: () => Promise<string | null>;
+  onClosed: () => void;
+}) {
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function close() {
+    setLoading(true);
+    setError(null);
+    try {
+      const token = await getAccessToken();
+      const res = await fetch(`/api/schedules/${scheduleId}/close`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error ?? "Failed to close schedule");
+      onClosed();
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to close");
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <div className="text-right space-y-1">
+      <button className="text-sm text-red-400 border border-red-900 rounded px-3 py-1" disabled={loading} onClick={close}>
+        {loading ? "Closing..." : "Close basket"}
+      </button>
+      {error && <p className="text-xs text-red-400">{error}</p>}
+    </div>
   );
 }

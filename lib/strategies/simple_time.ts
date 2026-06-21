@@ -1,6 +1,7 @@
 import type { BasketAsset, TradeIntent } from "@/lib/db/types";
-import { CYCLE_DURATION_MS, DEADLINE_OFFSET_MS } from "@/lib/hl/config";
+import { cycleDurationMs, deadlineOffsetMs } from "@/lib/hl/config";
 import { getAllMids } from "@/lib/hl/read";
+import { intradayDropFor } from "./thresholds";
 
 export function lastDcaEntryPrice(
   fills: { coin: string; fill_px: number | null; executions?: { detail?: { type?: string } } }[],
@@ -14,18 +15,18 @@ export function lastDcaEntryPrice(
   return null;
 }
 
-export function currentCycleStart(anchor: Date, now: Date): Date {
+export function currentCycleStart(anchor: Date, now: Date, cycleMs: number): Date {
   if (now < anchor) return anchor;
-  const elapsed = Math.floor((now.getTime() - anchor.getTime()) / CYCLE_DURATION_MS);
-  return new Date(anchor.getTime() + elapsed * CYCLE_DURATION_MS);
+  const elapsed = Math.floor((now.getTime() - anchor.getTime()) / cycleMs);
+  return new Date(anchor.getTime() + elapsed * cycleMs);
 }
 
-export function cycleDeadline(cycleStart: Date): Date {
-  return new Date(cycleStart.getTime() + DEADLINE_OFFSET_MS);
+export function cycleDeadline(cycleStart: Date, deadlineMs: number): Date {
+  return new Date(cycleStart.getTime() + deadlineMs);
 }
 
-export function cycleEnds(cycleStart: Date): Date {
-  return new Date(cycleStart.getTime() + CYCLE_DURATION_MS);
+export function cycleEnds(cycleStart: Date, cycleMs: number): Date {
+  return new Date(cycleStart.getTime() + cycleMs);
 }
 
 export function selectCycle(
@@ -34,33 +35,38 @@ export function selectCycle(
   assets: BasketAsset[],
   alreadyBought: (coin: string, cycleStart: Date) => boolean,
   deadlineAttempted: (cycleStart: Date) => boolean,
+  cycleMs: number,
+  deadlineMs: number,
 ): { cycleStart: Date; isDeadline: boolean; isCatchUp: boolean } {
-  const cycleStart = currentCycleStart(anchor, now);
+  const cycleStart = currentCycleStart(anchor, now, cycleMs);
 
   if (cycleStart > anchor) {
-    const previous = new Date(cycleStart.getTime() - CYCLE_DURATION_MS);
+    const previous = new Date(cycleStart.getTime() - cycleMs);
     const pending = assets.some((a) => !alreadyBought(a.coin, previous));
-    if (now >= cycleEnds(previous) && pending && !deadlineAttempted(previous)) {
+    if (now >= cycleEnds(previous, cycleMs) && pending && !deadlineAttempted(previous)) {
       return { cycleStart: previous, isDeadline: true, isCatchUp: true };
     }
   }
 
-  return { cycleStart, isDeadline: now >= cycleDeadline(cycleStart), isCatchUp: false };
+  return { cycleStart, isDeadline: now >= cycleDeadline(cycleStart, deadlineMs), isCatchUp: false };
 }
 
 export async function planSimpleTimeBuys(input: {
   assets: BasketAsset[];
   amountUsd: number;
   params: Record<string, unknown>;
+  intervalSeconds: number;
   sessionStartedAt: Date;
   now: Date;
   alreadyBoughtThisCycle: (coin: string, cycleStart: Date) => boolean;
   deadlineAttempted: (cycleStart: Date) => boolean;
   recentFills: { coin: string; fill_px: number | null; executions?: { detail?: { type?: string } } }[];
 }): Promise<{ intents: TradeIntent[]; cycleStart: Date; skipped: string[] }> {
-  const { assets, amountUsd, params, sessionStartedAt, now } = input;
+  const { assets, amountUsd, params, sessionStartedAt, now, intervalSeconds } = input;
   const slippage = Number(params.slippage ?? 0.01);
   const totalWeight = assets.reduce((s, a) => s + Number(a.weight), 0);
+  const cycleMs = cycleDurationMs(intervalSeconds);
+  const deadlineMs = deadlineOffsetMs(intervalSeconds);
 
   const { cycleStart, isDeadline } = selectCycle(
     sessionStartedAt,
@@ -68,6 +74,8 @@ export async function planSimpleTimeBuys(input: {
     assets,
     input.alreadyBoughtThisCycle,
     input.deadlineAttempted,
+    cycleMs,
+    deadlineMs,
   );
 
   const intents: TradeIntent[] = [];
@@ -80,9 +88,7 @@ export async function planSimpleTimeBuys(input: {
     }
 
     const marginUsd = (amountUsd * Number(asset.weight)) / totalWeight;
-    const intradayDrop = Number(
-      params.intraday_drop ?? params[`intraday_drop_${asset.coin}`] ?? 0.03,
-    );
+    const intradayDrop = intradayDropFor(asset.coin, params);
 
     if (isDeadline) {
       intents.push({ asset, marginUsd, trigger: "DEADLINE" });

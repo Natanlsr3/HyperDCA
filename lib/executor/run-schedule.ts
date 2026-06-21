@@ -6,10 +6,13 @@ import {
   createExecution,
   createOrder,
   getRecentDcaFills,
+  updateExecutionStatus,
 } from "@/lib/db/queries";
+import type { ExecuteTradeResult } from "@/lib/hl/order";
 import { executeTradeForAsset, makeCloid } from "@/lib/hl/order";
-import { getSpotBalance } from "@/lib/hl/read";
+import { getPerpAccountBalances } from "@/lib/hl/read";
 import { planSimpleTimeBuys } from "@/lib/strategies/simple_time";
+import { planSimpleDcaBuys } from "@/lib/strategies/simple_dca";
 import { planPriceDropBuys } from "@/lib/strategies/price_drop";
 
 function parseBuffer(value: unknown): Buffer {
@@ -36,11 +39,11 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
     return { status: "skipped", trades: [{ coin: "*", status: "skipped", error: "agent not approved" }] };
   }
 
-  const usdc = await getSpotBalance(mainWallet);
-  if (usdc < Number(schedule.amount_usd)) {
+  const { withdrawable } = await getPerpAccountBalances(mainWallet);
+  if (withdrawable < Number(schedule.amount_usd)) {
     return {
       status: "skipped",
-      trades: [{ coin: "*", status: "skipped", error: `awaiting funds (${usdc.toFixed(2)} USDC)` }],
+      trades: [{ coin: "*", status: "skipped", error: `awaiting funds (${withdrawable.toFixed(2)} USDC)` }],
     };
   }
 
@@ -77,11 +80,36 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
     ? new Date(schedule.session_started_at)
     : new Date(schedule.created_at);
 
-  if (schedule.strategy_type === "simple_time") {
+  const isSimpleMode = schedule.params?.mode === "simple";
+  const isDip = schedule.strategy_type === "price_drop";
+
+  if (isDip) {
+    const plan = await planPriceDropBuys({
+      assets,
+      amountUsd: Number(schedule.amount_usd),
+      params: schedule.params,
+      recentFills,
+    });
+    intents = plan.intents;
+    skipped = plan.skipped;
+  } else if (isSimpleMode) {
+    const plan = planSimpleDcaBuys({
+      assets,
+      amountUsd: Number(schedule.amount_usd),
+      intervalSeconds: schedule.interval_seconds,
+      sessionStartedAt,
+      now,
+      alreadyBoughtThisCycle,
+    });
+    intents = plan.intents;
+    cycleStart = plan.cycleStart;
+    skipped = plan.skipped;
+  } else {
     const plan = await planSimpleTimeBuys({
       assets,
       amountUsd: Number(schedule.amount_usd),
       params: schedule.params,
+      intervalSeconds: schedule.interval_seconds,
       sessionStartedAt,
       now,
       alreadyBoughtThisCycle,
@@ -90,15 +118,6 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
     });
     intents = plan.intents;
     cycleStart = plan.cycleStart;
-    skipped = plan.skipped;
-  } else {
-    const plan = await planPriceDropBuys({
-      assets,
-      amountUsd: Number(schedule.amount_usd),
-      params: schedule.params,
-      recentFills,
-    });
-    intents = plan.intents;
     skipped = plan.skipped;
   }
 
@@ -112,7 +131,7 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
     schedule.user_id,
     "partial",
     {
-      type: schedule.strategy_type === "simple_time" ? "dca" : "dip",
+      type: isDip ? "dip" : "dca",
       skipped,
       deadline_catch_up: cycleStart ? deadlineAttempted(cycleStart) : false,
     },
@@ -124,8 +143,10 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
 
   for (const intent of intents) {
     const cloid = makeCloid("hdca", schedule.id, intent.asset.coin);
+
+    let result: ExecuteTradeResult;
     try {
-      const result = await executeTradeForAsset(
+      result = await executeTradeForAsset(
         agentAccount,
         mainWallet,
         intent.asset,
@@ -134,7 +155,15 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
         slippage,
         cloid,
       );
+    } catch (e) {
+      result = {
+        coin: intent.asset.coin,
+        status: "error",
+        error: e instanceof Error ? e.message : String(e),
+      };
+    }
 
+    try {
       await createOrder({
         execution_id: execution.id,
         schedule_id: schedule.id,
@@ -148,32 +177,24 @@ export async function executeSchedule(schedule: ScheduleWithRelations): Promise<
         notional: result.notional ?? null,
         error: result.error ?? null,
       });
-
-      trades.push({
-        ...result,
-        trigger: intent.trigger,
-        refPrice: intent.refPrice,
-        dropPct: intent.dropPct,
-        cloid,
-      });
     } catch (e) {
-      const err = e instanceof Error ? e.message : String(e);
-      await createOrder({
-        execution_id: execution.id,
-        schedule_id: schedule.id,
-        coin: intent.asset.coin,
-        dex: intent.asset.dex,
-        cloid,
-        requested_usd: intent.marginUsd,
-        status: "error",
-        error: err,
-      });
-      trades.push({ coin: intent.asset.coin, status: "error", error: err, cloid });
+      console.error("createOrder failed", cloid, e instanceof Error ? e.message : e);
     }
+
+    trades.push({
+      ...result,
+      trigger: intent.trigger,
+      refPrice: intent.refPrice,
+      dropPct: intent.dropPct,
+      cloid,
+    });
   }
 
   const filled = trades.filter((t) => t.status === "filled").length;
   const status = filled === trades.length ? "success" : filled > 0 ? "partial" : "error";
+
+  // Persist the final status (execution row is created as "partial" up front).
+  await updateExecutionStatus(execution.id, status);
 
   await advanceSchedule(
     schedule.id,

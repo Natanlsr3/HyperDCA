@@ -1,7 +1,7 @@
 import { ExchangeClient } from "@nktkas/hyperliquid";
 import type { PrivateKeyAccount } from "viem/accounts";
-import { createExchangeClient, getTransport } from "./client";
-import { getBuilderAddress, getBuilderMaxFee, getHlNetwork } from "./config";
+import { createExchangeClient, createInfoClient, getTransport } from "./client";
+import { getBuilderAddress, getBuilderFeeTenthsBps, getBuilderMaxFee, getHlNetwork } from "./config";
 
 export function createMainExchangeClient(wallet: PrivateKeyAccount): ExchangeClient {
   return new ExchangeClient({ transport: getTransport(), wallet });
@@ -55,4 +55,36 @@ export function getApproveBuilderFeeTypedData() {
     maxFeeRate,
     nonce: Date.now(),
   };
+}
+
+export interface ApprovalStatus {
+  agentApproved: boolean;
+  builderApproved: boolean;
+  maxBuilderFee: number;
+  requiredBuilderFee: number;
+}
+
+export async function checkApprovals(
+  mainWallet: `0x${string}`,
+  agentAddress: `0x${string}`,
+): Promise<ApprovalStatus> {
+  const info = createInfoClient();
+  const builder = getBuilderAddress();
+  const requiredBuilderFee = getBuilderFeeTenthsBps();
+
+  const [agents, maxFee] = await Promise.all([
+    info.extraAgents({ user: mainWallet }),
+    info.maxBuilderFee({ user: mainWallet, builder }),
+  ]);
+
+  const now = Date.now();
+  const target = agentAddress.toLowerCase();
+  const agentApproved = agents.some(
+    (a) => a.address.toLowerCase() === target && a.validUntil > now,
+  );
+
+  const maxBuilderFee = Number(maxFee);
+  const builderApproved = maxBuilderFee >= requiredBuilderFee;
+
+  return { agentApproved, builderApproved, maxBuilderFee, requiredBuilderFee };
 }

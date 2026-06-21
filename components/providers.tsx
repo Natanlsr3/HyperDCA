@@ -3,6 +3,8 @@
 import { PrivyProvider } from "@privy-io/react-auth";
 import { useEffect } from "react";
 import type { ReactNode } from "react";
+import { arbitrum } from "viem/chains";
+import { WalletLinker } from "./wallet-linker";
 
 function usePrivyDevConsoleFilter() {
   useEffect(() => {
@@ -40,9 +42,12 @@ export function Providers({ children }: { children: ReactNode }) {
       config={{
         loginMethods: ["email", "google"],
         appearance: { theme: "dark", accentColor: "#22d3ee" },
-        embeddedWallets: { createOnLogin: "users-without-wallets" },
+        embeddedWallets: { ethereum: { createOnLogin: "users-without-wallets" } },
+        defaultChain: arbitrum,
+        supportedChains: [arbitrum],
       }}
     >
+      <WalletLinker />
       {children}
     </PrivyProvider>
   );

@@ -136,16 +136,43 @@ function BasketDetailView({
   const [customRange, setCustomRange] = useState<CustomRange>({});
   const [mirrorOpen, setMirrorOpen] = useState(false);
   const premium = getPremiumTemplateForBasket(basket);
-  const series = makeHistorySeries(basket.id, period, customRange, basket.roi_30d ?? 0.18);
+
+  // Fetch real chart data from Hyperliquid
+  const syntheticSeries = makeHistorySeries(basket.id, period, customRange, basket.roi_30d ?? 0.18);
+  const [realSeries, setRealSeries] = useState<{ label: string; value: number }[] | null>(null);
+  const [realLoading, setRealLoading] = useState(false);
+
+  useEffect(() => {
+    if (period === "custom") return; // custom uses synthetic
+    setRealLoading(true);
+    const assetsParam = basket.basket_assets
+      .map((a) => `${a.coin}:${a.weight}`)
+      .join(",");
+    fetch(`/api/market/history?assets=${encodeURIComponent(assetsParam)}&period=${period}`)
+      .then((res) => res.json())
+      .then((data) => {
+        if (data.series?.length > 0) {
+          setRealSeries(data.series);
+        }
+      })
+      .catch(() => { /* use synthetic fallback */ })
+      .finally(() => setRealLoading(false));
+  }, [basket.basket_assets, period]);
+
+  const series = realSeries ?? syntheticSeries;
   const delta = seriesDelta(series);
-  const assets = premium?.assets ?? basket.basket_assets.map((asset) => ({
-    coin: asset.coin,
-    ticker: asset.dex ? `${asset.dex}:${asset.coin}` : asset.coin,
-    sector: "Perpetuals",
-    role: "Basket exposure",
-    risk: "Medium" as const,
-    weight: Number(asset.weight),
-  }));
+  const assets = premium?.assets ?? basket.basket_assets.map((asset) => {
+    const idx = asset.coin.indexOf(":");
+    const displayName = idx >= 0 ? asset.coin.slice(idx + 1) : asset.coin;
+    return {
+      coin: displayName,
+      ticker: asset.coin,
+      sector: asset.dex === "xyz" ? "Equities / Commodities" : "Crypto Perpetuals",
+      role: "Basket exposure",
+      risk: "Medium" as const,
+      weight: Number(asset.weight),
+    };
+  });
 
   return (
     <div>
@@ -354,9 +381,15 @@ function AgentTab({ premium, basket }: { premium: PremiumBasketTemplate | null; 
     roi_30d: basket.roi_30d ?? 0,
     hit_rate: basket.hit_rate ?? 0,
     followers: basket.followers_count ?? 0,
-    assets: (premium?.assets ?? basket.basket_assets).map((a) => ({
+    assets: (premium?.assets ?? basket.basket_assets).map((a) => {
+      const coin = a.coin;
+      const idx = coin.indexOf(":");
+      return { coin: idx >= 0 ? coin.slice(idx + 1) : coin, weight: "weight" in a ? Number(a.weight) : 0 };
+    }),
+    // Pass raw HL symbols so the server can fetch live prices
+    hlSymbols: basket.basket_assets.map((a) => ({
       coin: a.coin,
-      weight: "weight" in a ? Number(a.weight) : 0,
+      weight: Number(a.weight),
     })),
     drivers: premium?.marketDrivers,
     risks: premium?.whatCouldGoWrong,
@@ -380,13 +413,53 @@ function AgentTab({ premium, basket }: { premium: PremiumBasketTemplate | null; 
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ message: userMsg, history, basketContext }),
       });
-      const data = await res.json();
-      const reply = data.reply || data.error || "Sorry, something went wrong.";
-      setMessages((prev) => [...prev, { role: "bot", text: reply }]);
-      setHistory((prev) => [...prev, { role: "user", text: userMsg }, { role: "model", text: reply }]);
+
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.error || "AI service error");
+      }
+
+      // Stream SSE tokens into the chat
+      const reader = res.body!.getReader();
+      const decoder = new TextDecoder();
+      let fullReply = "";
+      let sseBuffer = "";
+
+      // Add empty bot message that we'll fill progressively
+      setMessages((prev) => [...prev, { role: "bot", text: "" }]);
+      setLoading(false); // hide dots — text is streaming
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        sseBuffer += decoder.decode(value, { stream: true });
+        const lines = sseBuffer.split("\n");
+        sseBuffer = lines.pop() ?? "";
+
+        for (const line of lines) {
+          if (!line.startsWith("data: ")) continue;
+          const payload = line.slice(6).trim();
+          if (!payload || payload === "[DONE]") continue;
+          try {
+            const chunk = JSON.parse(payload);
+            if (chunk.t) {
+              fullReply += chunk.t;
+              const snapshot = fullReply;
+              setMessages((prev) => {
+                const updated = [...prev];
+                updated[updated.length - 1] = { role: "bot", text: snapshot };
+                return updated;
+              });
+            }
+          } catch { /* skip malformed */ }
+        }
+      }
+
+      if (!fullReply) fullReply = "Sorry, I couldn't generate a response.";
+      setHistory((prev) => [...prev, { role: "user", text: userMsg }, { role: "model", text: fullReply }]);
     } catch {
       setMessages((prev) => [...prev, { role: "bot", text: "Connection error. Try again." }]);
-    } finally {
       setLoading(false);
     }
   }

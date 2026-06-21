@@ -54,6 +54,31 @@ export async function getClearinghouseState(wallet: string, dex = "") {
   return info.clearinghouseState({ user: wallet as `0x${string}`, dex: dex || undefined });
 }
 
+export interface PerpAccountBalances {
+  accountValue: number;
+  withdrawable: number;
+  totalMarginUsed: number;
+}
+
+/** Sum perp margin across all dexs (same source as portfolio API). */
+export async function getPerpAccountBalances(wallet: string): Promise<PerpAccountBalances> {
+  const allState = await getAllDexsClearinghouseState(wallet);
+  let accountValue = 0;
+  let withdrawable = 0;
+  let totalMarginUsed = 0;
+  for (const state of Object.values(allState) as ClearinghouseStateResponse[]) {
+    accountValue += Number(state.marginSummary?.accountValue ?? 0);
+    withdrawable += Number(state.withdrawable ?? 0);
+    totalMarginUsed += Number(state.marginSummary?.totalMarginUsed ?? 0);
+  }
+  // Unified account: USDC collateral lives in the Spot balance (token 0) and is
+  // available for perp trading. Count it so the executor sees deposited funds.
+  const spotUsdc = await getSpotBalance(wallet, "USDC");
+  accountValue += spotUsdc;
+  withdrawable += spotUsdc;
+  return { accountValue, withdrawable, totalMarginUsed };
+}
+
 export async function getUserFillsByTime(
   wallet: string,
   startTime: number,
@@ -75,6 +100,32 @@ export async function getUserFunding(wallet: string, startTime: number, endTime?
 export async function getPredictedFundings() {
   const info = createInfoClient();
   return info.predictedFundings();
+}
+
+/** Live sz_decimals for a coin on a given dex (""=main). Null if not found. */
+export async function getSzDecimals(coin: string, dex = ""): Promise<number | null> {
+  const info = createInfoClient();
+  const meta = await info.meta({ dex });
+  const u = meta.universe.find((a) => a.name === coin);
+  return u ? u.szDecimals : null;
+}
+
+/**
+ * All-time trading PnL (realized + unrealized, net of fees/funding) from HL's
+ * portfolio endpoint. This excludes deposits/withdrawals by construction — it is
+ * pure trading performance. Resilient: returns 0 if unavailable.
+ */
+export async function getAllTimePnl(wallet: string): Promise<number> {
+  try {
+    const info = createInfoClient();
+    const data = await info.portfolio({ user: wallet as `0x${string}` });
+    const allTime = data.find(([period]) => period === "allTime")?.[1];
+    const history = allTime?.pnlHistory ?? [];
+    if (!history.length) return 0;
+    return Number(history[history.length - 1][1]);
+  } catch {
+    return 0;
+  }
 }
 
 export async function getUserDexAbstraction(wallet: string) {
@@ -172,7 +223,7 @@ export async function estimateCarryForAssets(
 
 export function computeLiquidationDistance(
   accountValue: number,
-  totalMarginUsed: number,
+  maintenanceMarginUsed: number,
   positions: PositionSummary[],
 ): { minDistancePct: number; worstCoin: string | null } {
   if (accountValue <= 0 || positions.length === 0) {
@@ -194,9 +245,13 @@ export function computeLiquidationDistance(
     }
   }
 
-  const marginRatio = totalMarginUsed / accountValue;
+  // Fallback when HL doesn't expose a per-position liquidationPx (e.g. cross
+  // positions on a HIP-3 dex): use MAINTENANCE margin, not initial. Initial
+  // margin ≈ full account value at max leverage, which falsely reads ~0%
+  // distance; maintenance margin is the real liquidation buffer.
+  const maintRatio = maintenanceMarginUsed / accountValue;
   return {
-    minDistancePct: minDistance === Infinity ? (1 - marginRatio) * 100 : minDistance * 100,
+    minDistancePct: minDistance === Infinity ? (1 - maintRatio) * 100 : minDistance * 100,
     worstCoin,
   };
 }

@@ -79,7 +79,7 @@ async function main() {
   }
 
   console.log("\nTesting USDH swap (@230)...");
-  const swap = await swapUsdcToUsdh(exchange, 11);
+  const swap = await swapUsdcToUsdh(exchange, converter, "@1", 11);
   console.log("  swap:", swap);
 
   console.log("\nTesting 1x vntl:MAG7 order with builder fee...");

@@ -21,7 +21,9 @@ export async function getPublicBaskets(filter?: {
   search?: string;
 }): Promise<BasketWithAssets[]> {
   const supa = createServiceClient();
-  const sortBy = filter?.sortBy ?? "roi_30d";
+  const dbColumns = new Set(["created_at", "name", "id"]);
+  const requestedSort = filter?.sortBy ?? "roi_30d";
+  const sortBy = dbColumns.has(requestedSort) ? requestedSort : "created_at";
   let query = supa
     .from("baskets")
     .select("*, basket_assets(*)")
@@ -29,8 +31,6 @@ export async function getPublicBaskets(filter?: {
     .order(sortBy, { ascending: sortBy === "created_at" })
     .limit(filter?.limit ?? 50);
 
-  if (filter?.network === "mainnet") query = query.eq("is_testnet", false);
-  if (filter?.network === "testnet") query = query.eq("is_testnet", true);
   if (filter?.search) query = query.ilike("name", `%${filter.search}%`);
 
   const { data, error } = await query;
@@ -42,16 +42,28 @@ export async function getBasketDetail(basketId: string, userId?: string): Promis
   const supa = createServiceClient();
   const { data, error } = await supa
     .from("baskets")
-    .select("*, basket_assets(*), basket_followers(*)")
+    .select("*, basket_assets(*)")
     .eq("id", basketId)
     .maybeSingle();
   if (error) throw error;
   if (!data) return null;
 
   const row = data as BasketWithAssets;
-  if (userId && row.basket_followers) {
-    row.basket_followers = row.basket_followers.filter((f) => f.user_id === userId);
+
+  // Try to load followers separately (table may not exist yet)
+  try {
+    const { data: followers } = await supa
+      .from("basket_followers")
+      .select("*")
+      .eq("basket_id", basketId);
+    row.basket_followers = followers ?? [];
+    if (userId && row.basket_followers) {
+      row.basket_followers = row.basket_followers.filter((f) => f.user_id === userId);
+    }
+  } catch {
+    row.basket_followers = [];
   }
+
   return row;
 }
 

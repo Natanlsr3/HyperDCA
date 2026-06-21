@@ -31,18 +31,29 @@ export async function getBasketById(id: string) {
   return data;
 }
 
-export async function upsertUser(privyId: string, email?: string | null, mainWallet?: string | null) {
+// Never null out existing email/main_wallet: only write columns we actually have.
+// main_wallet is linked separately via linkMainWallet once the embedded wallet exists.
+export async function upsertUser(privyId: string, email?: string | null) {
+  const supa = createServiceClient();
+  const payload: { privy_id: string; email?: string } = { privy_id: privyId };
+  if (email) payload.email = email;
+  const { data, error } = await supa
+    .from("users")
+    .upsert(payload, { onConflict: "privy_id" })
+    .select("*")
+    .single();
+  if (error) throw error;
+  return data;
+}
+
+// Links the Privy embedded wallet (the HL master account) without clobbering it on
+// subsequent logins. Caller must have ensured the user row exists (upsertUser first).
+export async function linkMainWallet(privyId: string, wallet: string) {
   const supa = createServiceClient();
   const { data, error } = await supa
     .from("users")
-    .upsert(
-      {
-        privy_id: privyId,
-        email: email ?? null,
-        main_wallet: mainWallet ?? null,
-      },
-      { onConflict: "privy_id" },
-    )
+    .update({ main_wallet: wallet })
+    .eq("privy_id", privyId)
     .select("*")
     .single();
   if (error) throw error;
@@ -68,13 +79,24 @@ export async function saveAgentKey(
       {
         user_id: userId,
         agent_address: agentAddress,
-        encrypted_private_key: encryptedPrivateKey,
+        encrypted_private_key: "\\x" + encryptedPrivateKey.toString("hex"),
         approved: false,
       },
       { onConflict: "user_id" },
     )
     .select("*")
     .single();
+  if (error) throw error;
+  return data;
+}
+
+export async function getAgentKey(userId: string) {
+  const supa = createServiceClient();
+  const { data, error } = await supa
+    .from("agent_keys")
+    .select("agent_address, encrypted_private_key, approved")
+    .eq("user_id", userId)
+    .maybeSingle();
   if (error) throw error;
   return data;
 }
@@ -87,13 +109,45 @@ export async function markAgentApproved(userId: string) {
   if (e2) throw e2;
 }
 
+export async function isUserOnboarded(userId: string) {
+  const supa = createServiceClient();
+  const [{ data: user, error: userErr }, { data: agent, error: agentErr }] = await Promise.all([
+    supa.from("users").select("builder_fee_approved").eq("id", userId).single(),
+    supa.from("agent_keys").select("approved").eq("user_id", userId).maybeSingle(),
+  ]);
+  if (userErr) throw userErr;
+  if (agentErr) throw agentErr;
+  return Boolean(user?.builder_fee_approved && agent?.approved);
+}
+
+// agent_keys has no FK to schedules; it joins via users (agent_keys.user_id -> users.id),
+// so it must be embedded under users, not directly off schedules (else PGRST200).
+const CLAIM_SELECT = `*, users!inner(main_wallet, agent_keys(agent_address, encrypted_private_key, approved))`;
+
+type AgentKeyEmbed = ScheduleWithRelations["agent_keys"];
+
+// PostgREST returns embedded to-many rows as arrays. agent_keys is unique per user,
+// so collapse the array to the single key (or null).
+function flattenClaimed(locked: Record<string, unknown>, assets: BasketAsset[]): ScheduleWithRelations {
+  const users = locked.users as { main_wallet: string | null; agent_keys: AgentKeyEmbed[] | AgentKeyEmbed | null };
+  const agentKey = Array.isArray(users.agent_keys)
+    ? users.agent_keys[0] ?? null
+    : users.agent_keys ?? null;
+  return {
+    ...locked,
+    users: { main_wallet: users.main_wallet },
+    agent_keys: agentKey,
+    basket_assets: assets,
+  } as ScheduleWithRelations;
+}
+
 export async function claimDueSchedules(limit = 20): Promise<ScheduleWithRelations[]> {
   const supa = createServiceClient();
   const now = new Date().toISOString();
 
   const { data: schedules, error } = await supa
     .from("schedules")
-    .select(`*, users!inner(main_wallet), agent_keys(agent_address, encrypted_private_key, approved)`)
+    .select(CLAIM_SELECT)
     .eq("status", "active")
     .lte("next_run_at", now)
     .or(`locked_until.is.null,locked_until.lte.${now}`)
@@ -110,7 +164,7 @@ export async function claimDueSchedules(limit = 20): Promise<ScheduleWithRelatio
       .update({ locked_until: lockUntil })
       .eq("id", row.id)
       .or(`locked_until.is.null,locked_until.lte.${now}`)
-      .select(`*, users!inner(main_wallet), agent_keys(agent_address, encrypted_private_key, approved)`)
+      .select(CLAIM_SELECT)
       .maybeSingle();
 
     if (lockErr || !locked) continue;
@@ -121,7 +175,7 @@ export async function claimDueSchedules(limit = 20): Promise<ScheduleWithRelatio
       .eq("basket_id", locked.basket_id);
     if (assetsErr || !assets?.length) continue;
 
-    claimed.push({ ...locked, basket_assets: assets } as ScheduleWithRelations);
+    claimed.push(flattenClaimed(locked, assets));
   }
   return claimed;
 }
@@ -163,6 +217,12 @@ export async function createExecution(
   return data;
 }
 
+export async function updateExecutionStatus(executionId: string, status: string) {
+  const supa = createServiceClient();
+  const { error } = await supa.from("executions").update({ status }).eq("id", executionId);
+  if (error) throw error;
+}
+
 export async function createOrder(row: {
   execution_id: string;
   schedule_id: string;
@@ -184,9 +244,11 @@ export async function createOrder(row: {
 
 export async function getActiveSchedulesForGuardrail() {
   const supa = createServiceClient();
+  // No basket_assets embed: it has no FK to schedules (PGRST200) and the
+  // guardrail only reads the user, so we don't need it here.
   const { data, error } = await supa
     .from("schedules")
-    .select("*, users!inner(id, main_wallet, guardrail_flagged), basket_assets(*)")
+    .select("*, users!inner(id, main_wallet, guardrail_flagged)")
     .eq("status", "active")
     .gt("leverage", 1);
   if (error) throw error;
@@ -208,10 +270,13 @@ export async function flagUserGuardrail(
 
 export async function getUserSchedules(userId: string) {
   const supa = createServiceClient();
+  // basket_assets joins via baskets (basket_assets.basket_id -> baskets.id),
+  // so nest it under baskets rather than directly off schedules (PGRST200).
   const { data, error } = await supa
     .from("schedules")
-    .select("*, baskets(name, theme), basket_assets(*)")
+    .select("*, baskets(name, theme, basket_assets(*))")
     .eq("user_id", userId)
+    .eq("status", "active")
     .order("created_at", { ascending: false });
   if (error) throw error;
   return data ?? [];
@@ -263,14 +328,27 @@ export async function getRecentDcaFills(scheduleId: string) {
 
 export async function getScheduleByIdForUser(scheduleId: string, userId: string) {
   const supa = createServiceClient();
+  // basket_assets joins via baskets; agent_keys joins via users — embed under
+  // their real FK parents, then flatten to top-level fields for the caller.
   const { data, error } = await supa
     .from("schedules")
-    .select("*, basket_assets(*), users!inner(main_wallet), agent_keys(*)")
+    .select("*, baskets!inner(basket_assets(*)), users!inner(main_wallet, agent_keys(*))")
     .eq("id", scheduleId)
     .eq("user_id", userId)
     .single();
   if (error) throw error;
-  return data;
+
+  const baskets = data.baskets as { basket_assets: BasketAsset[] } | null;
+  const users = data.users as { main_wallet: string | null; agent_keys: unknown[] | unknown | null };
+  const agentKey = Array.isArray(users?.agent_keys)
+    ? users.agent_keys[0] ?? null
+    : users?.agent_keys ?? null;
+
+  return {
+    ...data,
+    basket_assets: baskets?.basket_assets ?? [],
+    agent_keys: agentKey,
+  };
 }
 
 export async function closeSchedule(scheduleId: string, userId: string) {

@@ -5,11 +5,14 @@ import { isServiceDbConfigured } from "@/lib/db/client";
 import type { ClearinghouseStateResponse } from "@nktkas/hyperliquid/api/info";
 import {
   estimateCarryForAssets,
+  getAllTimePnl,
   getMergedPositions,
   getAllDexsClearinghouseState,
+  getSpotBalance,
   getUserFunding,
 } from "@/lib/hl/read";
 import { getBasketById } from "@/lib/db/queries";
+import { getHlNetwork } from "@/lib/hl/config";
 
 export async function GET(req: Request) {
   try {
@@ -46,14 +49,24 @@ export async function GET(req: Request) {
     const allState = await getAllDexsClearinghouseState(wallet);
 
     let accountValue = 0;
+    let withdrawable = 0;
     let totalMarginUsed = 0;
     for (const state of Object.values(allState) as ClearinghouseStateResponse[]) {
       accountValue += Number(state.marginSummary?.accountValue ?? 0);
+      withdrawable += Number(state.withdrawable ?? 0);
       totalMarginUsed += Number(state.marginSummary?.totalMarginUsed ?? 0);
     }
 
+    // On a HL unified account, deposited USDC sits in the Spot balance (token 0)
+    // and is the trading collateral; the perp clearinghouseState reads 0 until
+    // margin is allocated. Include spot USDC so the dashboard reflects real funds.
+    const spotUsdc = await getSpotBalance(wallet, "USDC");
+    accountValue += spotUsdc;
+    withdrawable += spotUsdc;
+
     const startTime = Date.now() - 30 * 24 * 60 * 60 * 1000;
     const funding = await getUserFunding(wallet, startTime);
+    const allTimePnl = await getAllTimePnl(wallet);
 
     let carry = null;
     if (basketId) {
@@ -78,6 +91,9 @@ export async function GET(req: Request) {
     return NextResponse.json({
       wallet,
       accountValue,
+      withdrawable,
+      allTimePnl,
+      isTestnet: getHlNetwork() === "testnet",
       totalMarginUsed,
       positions,
       funding: funding.slice(0, 50),

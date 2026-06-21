@@ -20,15 +20,40 @@ export const COLORS = {
 } as const;
 
 export const ASSET_COLORS: Record<string, string> = {
+  // Crypto
   BTC: "#F7931A",
   ETH: "#627EEA",
   SOL: "#14F195",
   HYPE: "#1E40AF",
-  NVDA: "#76B900",
-  AMD: "#ED1C24",
-  TSLA: "#CC0000",
   LINK: "#2A5ADA",
   AAVE: "#B6509E",
   UNI: "#FF007A",
+  AVAX: "#E84142",
+  DOT: "#E6007A",
+  MATIC: "#8247E5",
+  ARB: "#28A0F0",
+  OP: "#FF0420",
+  TRX: "#FF0013",
+  // Equities
+  NVDA: "#76B900",
+  AMD: "#ED1C24",
+  TSLA: "#CC0000",
+  MSFT: "#00A4EF",
+  GOOGL: "#4285F4",
+  AMZN: "#FF9900",
+  META: "#0668E1",
+  AAPL: "#A2AAAD",
+  TSM: "#D71920",
+  ASML: "#0F238C",
+  AVGO: "#CC092F",
+  MU: "#003DA5",
+  BABA: "#FF6A00",
+  // Commodities
+  GOLD: "#FFD700",
+  SILVER: "#C0C0C0",
+  COPPER: "#B87333",
+  OIL: "#2D2D2D",
+  WHEAT: "#DEB887",
+  GAS: "#4ECDC4",
 };
 
