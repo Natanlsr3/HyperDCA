@@ -30,6 +30,24 @@ interface Basket {
   basket_assets: BasketAsset[];
 }
 
+interface UserPosition {
+  coin: string;
+  szi: number;
+  entryPx: number;
+  positionValue: number;
+  unrealizedPnl: number;
+}
+
+interface UserSchedule {
+  id: string;
+  amount_usd: number;
+  interval_seconds: number;
+  leverage: number;
+  status: string;
+  last_run_at: string | null;
+  next_run_at: string | null;
+}
+
 type Tab = "overview" | "assets" | "updates" | "thesis" | "agent";
 
 export default function BasketDetailPage({ params }: { params: Promise<{ id: string }> }) {
@@ -42,6 +60,9 @@ function BasketDetailAuthed({ params }: { params: Promise<{ id: string }> }) {
   const [id, setId] = useState<string | null>(null);
   const [basket, setBasket] = useState<Basket | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [userPositions, setUserPositions] = useState<UserPosition[]>([]);
+  const [userSchedule, setUserSchedule] = useState<UserSchedule | null>(null);
+  const [accountValue, setAccountValue] = useState(0);
 
   useEffect(() => {
     params.then((value) => setId(value.id));
@@ -56,6 +77,36 @@ function BasketDetailAuthed({ params }: { params: Promise<{ id: string }> }) {
       setBasket(data.basket ?? null);
     })();
   }, [id, authenticated, getAccessToken]);
+
+  // Fetch user positions and schedules when authenticated
+  useEffect(() => {
+    if (!authenticated || !id) return;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        const [portRes, schedRes] = await Promise.all([
+          fetch("/api/portfolio", { headers }),
+          fetch("/api/schedules", { headers }),
+        ]);
+        const port = await portRes.json();
+        const sched = await schedRes.json();
+
+        setAccountValue(port.accountValue ?? 0);
+
+        // Filter positions matching this basket's assets
+        if (Array.isArray(port.positions)) {
+          setUserPositions(port.positions);
+        }
+
+        // Find active schedule for this basket
+        const activeSchedule = (sched.schedules ?? []).find(
+          (s: { basket_id: string; status: string }) => s.basket_id === id && s.status === "active",
+        );
+        setUserSchedule(activeSchedule ?? null);
+      } catch { /* silent */ }
+    })();
+  }, [authenticated, getAccessToken, id]);
 
   async function authedPost(path: string, body?: Record<string, unknown>) {
     if (!authenticated) {
@@ -79,6 +130,10 @@ function BasketDetailAuthed({ params }: { params: Promise<{ id: string }> }) {
     <BasketDetailView
       basket={basket}
       message={message}
+      userPositions={userPositions}
+      userSchedule={userSchedule}
+      accountValue={accountValue}
+      authenticated={authenticated}
       onFollow={async () => {
         try {
           await authedPost(`/api/baskets/${basket.id}/follow`, { mode: "manual" });
@@ -123,12 +178,20 @@ function BasketDetailView({
   basket,
   authUnavailable,
   message,
+  userPositions,
+  userSchedule,
+  accountValue,
+  authenticated,
   onFollow,
   onMirror,
 }: {
   basket: Basket;
   authUnavailable?: boolean;
   message?: string | null;
+  userPositions?: UserPosition[];
+  userSchedule?: UserSchedule | null;
+  accountValue?: number;
+  authenticated?: boolean;
   onFollow?: () => void;
   onMirror?: () => void;
 }) {
@@ -216,7 +279,7 @@ function BasketDetailView({
 
       <div className="premium-layout">
         <main>
-          {activeTab === "overview" ? <OverviewTab basket={basket} premium={premium} period={period} customRange={customRange} setPeriod={setPeriod} setCustomRange={setCustomRange} series={series} delta={delta} /> : null}
+          {activeTab === "overview" ? <OverviewTab basket={basket} premium={premium} period={period} customRange={customRange} setPeriod={setPeriod} setCustomRange={setCustomRange} series={series} delta={delta} userPositions={userPositions} userSchedule={userSchedule} accountValue={accountValue} authenticated={authenticated} /> : null}
           {activeTab === "assets" ? <AssetsTab assets={assets} /> : null}
           {activeTab === "updates" ? <UpdatesTab premium={premium} /> : null}
           {activeTab === "thesis" ? <ThesisTab premium={premium} /> : null}
@@ -249,7 +312,12 @@ function BasketDetailView({
   );
 }
 
-function OverviewTab({ basket, premium, period, customRange, setPeriod, setCustomRange, series, delta }: {
+function displayCoin(coin: string) {
+  const idx = coin.indexOf(":");
+  return idx >= 0 ? coin.slice(idx + 1) : coin;
+}
+
+function OverviewTab({ basket, premium, period, customRange, setPeriod, setCustomRange, series, delta, userPositions, userSchedule, accountValue, authenticated }: {
   basket: Basket;
   premium: PremiumBasketTemplate | null;
   period: HistoryPeriod;
@@ -258,9 +326,87 @@ function OverviewTab({ basket, premium, period, customRange, setPeriod, setCusto
   setCustomRange: (range: CustomRange) => void;
   series: ReturnType<typeof makeHistorySeries>;
   delta: number;
+  userPositions?: UserPosition[];
+  userSchedule?: UserSchedule | null;
+  accountValue?: number;
+  authenticated?: boolean;
 }) {
+  // Filter positions that match this basket's assets
+  const basketCoins = new Set(basket.basket_assets.map((a) => a.coin));
+  const matchingPositions = (userPositions ?? []).filter((p) => basketCoins.has(p.coin));
+  const totalValue = matchingPositions.reduce((sum, p) => sum + Math.abs(p.positionValue), 0);
+  const totalPnl = matchingPositions.reduce((sum, p) => sum + p.unrealizedPnl, 0);
+  const hasPosition = matchingPositions.length > 0;
+
   return (
     <div className="space-y-[18px]">
+      {authenticated && (hasPosition || userSchedule) ? (
+        <section className="card p-[22px]">
+          <h2 className="premium-section-title">Your position</h2>
+          {hasPosition ? (
+            <>
+              <div className="mb-[14px] grid gap-3 sm:grid-cols-3">
+                <div className="stat-card">
+                  <p className="label">Invested</p>
+                  <p className="mono text-[22px] font-semibold text-[var(--text)]">${totalValue.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                </div>
+                <div className="stat-card">
+                  <p className="label">Unrealized PnL</p>
+                  <p className={`mono text-[22px] font-semibold ${totalPnl >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}>
+                    {totalPnl >= 0 ? "+" : ""}{totalPnl.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
+                </div>
+                <div className="stat-card">
+                  <p className="label">% of portfolio</p>
+                  <p className="mono text-[22px] font-semibold text-[var(--text)]">
+                    {accountValue ? `${((totalValue / accountValue) * 100).toFixed(1)}%` : "—"}
+                  </p>
+                </div>
+              </div>
+              <div className="overflow-hidden rounded-[12px] border border-[var(--border)]">
+                <table className="data-table">
+                  <thead>
+                    <tr>
+                      <th>Asset</th>
+                      <th className="text-right">Size</th>
+                      <th className="text-right">Entry</th>
+                      <th className="text-right">Value</th>
+                      <th className="text-right">PnL</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {matchingPositions.map((pos) => (
+                      <tr key={pos.coin}>
+                        <td className="font-semibold text-[var(--text)]">{displayCoin(pos.coin)}</td>
+                        <td className="mono text-right text-[var(--text2)]">{Math.abs(pos.szi).toFixed(4)}</td>
+                        <td className="mono text-right text-[var(--text2)]">${pos.entryPx.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                        <td className="mono text-right font-semibold text-[var(--text)]">${Math.abs(pos.positionValue).toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+                        <td className={`mono text-right font-semibold ${pos.unrealizedPnl >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}>
+                          {pos.unrealizedPnl >= 0 ? "+" : ""}{pos.unrealizedPnl.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </>
+          ) : null}
+          {userSchedule ? (
+            <div className={`${hasPosition ? "mt-[14px] " : ""}rounded-[10px] border border-[var(--accentSoft)] bg-[var(--accentSoft)] p-[14px]`}>
+              <div className="flex items-center gap-2">
+                <span className="inline-flex h-[8px] w-[8px] rounded-full bg-[var(--pos)]" />
+                <span className="text-[13px] font-semibold text-[var(--text)]">Active DCA schedule</span>
+              </div>
+              <p className="m-0 mt-1 text-[13px] text-[var(--text2)]">
+                ${userSchedule.amount_usd} every {userSchedule.interval_seconds >= 86400 ? `${Math.round(userSchedule.interval_seconds / 86400)}d` : `${Math.round(userSchedule.interval_seconds / 3600)}h`}
+                {userSchedule.leverage > 1 ? ` · ${userSchedule.leverage}x leverage` : ""}
+                {userSchedule.next_run_at ? ` · Next: ${new Date(userSchedule.next_run_at).toLocaleDateString()}` : ""}
+              </p>
+            </div>
+          ) : null}
+        </section>
+      ) : null}
+
       <section className="card p-[22px]">
         <h2 className="premium-section-title">About this basket</h2>
         <p className="premium-copy">{premium?.thesis ?? basket.description}</p>
