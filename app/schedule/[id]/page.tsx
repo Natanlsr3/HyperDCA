@@ -36,6 +36,7 @@ function ScheduleSetupContent() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [demoNotice, setDemoNotice] = useState<string | null>(null);
+  const [onboardingChecked, setOnboardingChecked] = useState(false);
 
   useEffect(() => {
     fetch(`/api/baskets?id=${id}`)
@@ -47,13 +48,29 @@ function ScheduleSetupContent() {
     if (!authenticated) return;
     (async () => {
       const token = await getAccessToken();
+      const res = await fetch("/api/onboarding", {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json();
+      if (!data.onboarded) {
+        router.replace(`/onboarding?returnTo=/schedule/${id}`);
+        return;
+      }
+      setOnboardingChecked(true);
+    })();
+  }, [authenticated, id, getAccessToken, router]);
+
+  useEffect(() => {
+    if (!authenticated || !onboardingChecked) return;
+    (async () => {
+      const token = await getAccessToken();
       const res = await fetch(`/api/portfolio?basketId=${id}&leverage=${leverage}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       const data = await readJsonResponse<{ carry?: { basketAnnualizedPct: number } }>(res);
       if (data.carry) setCarryPct(data.carry.basketAnnualizedPct);
     })();
-  }, [authenticated, id, leverage, getAccessToken]);
+  }, [authenticated, id, leverage, getAccessToken, onboardingChecked]);
 
   async function submit() {
     setLoading(true);

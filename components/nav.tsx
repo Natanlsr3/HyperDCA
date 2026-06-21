@@ -1,9 +1,9 @@
 "use client";
 
-import { usePrivy } from "@privy-io/react-auth";
+import { usePrivy, useWallets } from "@privy-io/react-auth";
 import Link from "next/link";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { FormEvent } from "react";
 
 const navItems = [
@@ -18,19 +18,39 @@ export function Nav() {
 }
 
 function StaticShell() {
-  return <Shell walletLabel="0x7a3f...b21c" walletMeta="Demo account" statusLabel="Demo mode" />;
+  return <Shell walletLabel="Not connected" walletMeta="Sign in to start" statusLabel="Demo mode" />;
 }
 
 function PrivyShell() {
-  const { ready, authenticated, login, logout, user } = usePrivy();
-  const wallet = user?.wallet?.address ? `${user.wallet.address.slice(0, 6)}...${user.wallet.address.slice(-4)}` : "0x7a3f...b21c";
+  const { ready, authenticated, login, logout, getAccessToken } = usePrivy();
+  const { wallets } = useWallets();
+  const embeddedAddress = wallets.find((w) => w.walletClientType === "privy")?.address ?? null;
+  const walletLabel = embeddedAddress
+    ? `${embeddedAddress.slice(0, 6)}...${embeddedAddress.slice(-4)}`
+    : "Creating wallet...";
+  const [onboarded, setOnboarded] = useState(true);
+
+  useEffect(() => {
+    if (!authenticated) return;
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        const res = await fetch("/api/onboarding", {
+          headers: { Authorization: `Bearer ${token}` },
+        });
+        const data = await res.json();
+        setOnboarded(Boolean(data.onboarded));
+      } catch { /* silent */ }
+    })();
+  }, [authenticated, getAccessToken]);
 
   return (
     <Shell
-      walletLabel={authenticated ? wallet : "Connect wallet"}
-      walletMeta={authenticated ? "Live account" : "Demo mode"}
+      walletLabel={authenticated ? walletLabel : "Connect wallet"}
+      walletMeta={authenticated ? "Live account" : "Sign in to start"}
       statusLabel={ready && authenticated ? undefined : "Sign in"}
       onStatusClick={authenticated ? logout : login}
+      showOnboardingLink={authenticated && !onboarded}
     />
   );
 }
@@ -40,11 +60,13 @@ function Shell({
   walletMeta,
   statusLabel,
   onStatusClick,
+  showOnboardingLink,
 }: {
   walletLabel: string;
   walletMeta: string;
   statusLabel?: string;
   onStatusClick?: () => void;
+  showOnboardingLink?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -106,6 +128,17 @@ function Shell({
         </nav>
 
         <div className="mt-auto space-y-3">
+          {showOnboardingLink && (
+            <Link
+              href="/onboarding"
+              className="flex items-center gap-[9px] rounded-[8px] border border-amber-800 bg-amber-950/30 px-[10px] py-[9px] text-[13px] font-semibold text-amber-300 no-underline transition hover:bg-amber-950/50"
+            >
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 9v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+              </svg>
+              <span>Account setup</span>
+            </Link>
+          )}
           <Link
             href="/debug/status"
             className={`flex items-center justify-between rounded-[8px] border border-[var(--border)] px-[10px] py-[8px] text-[12px] font-semibold no-underline ${

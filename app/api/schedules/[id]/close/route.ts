@@ -22,6 +22,15 @@ function parseBuffer(value: unknown): Buffer {
   throw new Error("Invalid encrypted_private_key format");
 }
 
+function clientCloseError(e: unknown): string {
+  if (!(e instanceof Error)) return "Failed to close basket positions";
+  const msg = e.message.toLowerCase();
+  if (msg.includes("authenticate data") || msg.includes("unsupported state")) {
+    return "Agent key could not be decrypted. Re-approve your agent and try again.";
+  }
+  return "Failed to close basket positions";
+}
+
 export async function POST(
   req: Request,
   { params }: { params: Promise<{ id: string }> },
@@ -44,19 +53,28 @@ export async function POST(
 
     const schedule = await getScheduleByIdForUser(id, user.id);
     const agent = schedule.agent_keys as { encrypted_private_key: unknown; approved: boolean } | null;
-    if (!agent?.approved) {
-      return NextResponse.json({ error: "Agent not approved" }, { status: 400 });
-    }
 
     const wallet = user.main_wallet;
-    if (!wallet) {
-      return NextResponse.json({ error: "No wallet" }, { status: 400 });
-    }
-
     const assets = schedule.basket_assets as BasketAsset[];
     const assetCoins = new Set(assets.map((a) => a.coin));
-    const positions = await getMergedPositions(wallet);
-    const toClose = positions.filter((p) => assetCoins.has(p.coin));
+
+    let toClose: Awaited<ReturnType<typeof getMergedPositions>> = [];
+    if (wallet) {
+      const positions = await getMergedPositions(wallet);
+      toClose = positions.filter((p) => assetCoins.has(p.coin));
+    }
+
+    if (toClose.length === 0) {
+      await closeSchedule(id, user.id);
+      return NextResponse.json({ closed: 0, results: [] });
+    }
+
+    if (!agent?.approved || !wallet) {
+      return NextResponse.json(
+        { error: "Open positions remain but the trading agent is not ready. Complete onboarding and try again." },
+        { status: 409 },
+      );
+    }
 
     const privateKey = decryptPrivateKey(parseBuffer(agent.encrypted_private_key));
     const agentAccount = privateKeyToAccount(privateKey as `0x${string}`);
@@ -71,11 +89,21 @@ export async function POST(
       results.push(result);
     }
 
-    await closeSchedule(id, user.id);
+    const failed = results.filter((r) => r.status !== "filled");
+    if (failed.length > 0) {
+      const coins = failed.map((r) => r.coin).join(", ");
+      return NextResponse.json(
+        {
+          error: `Could not close ${failed.length} position(s) (${coins}). Schedule remains active — try again.`,
+          results,
+        },
+        { status: 409 },
+      );
+    }
 
+    await closeSchedule(id, user.id);
     return NextResponse.json({ closed: results.length, results });
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Close failed";
-    return NextResponse.json({ error: msg }, { status: 500 });
+    return NextResponse.json({ error: clientCloseError(e) }, { status: 409 });
   }
 }
