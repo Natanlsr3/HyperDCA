@@ -476,6 +476,10 @@ select {
   width: 100%;
 }
 
+.app-bottombar {
+  display: none;
+}
+
 @media (max-width: 860px) {
   .app-sidebar {
     display: none;
@@ -491,7 +495,26 @@ select {
   }
 
   .app-content {
-    padding: 24px 16px 48px;
+    padding: 24px 16px 100px;
+  }
+
+  .app-bottombar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    z-index: 40;
+    display: flex;
+    align-items: stretch;
+    border-top: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0 4px env(safe-area-inset-bottom, 0);
+    box-shadow: 0 -1px 4px rgba(0,0,0,0.06);
+  }
+
+  .app-topbar {
+    gap: 10px;
+    padding: 0 12px;
   }
 }
 
@@ -515,15 +538,64 @@ select {
     grid-template-columns: 1fr;
   }
 
+  .design-h1 {
+    font-size: 26px;
+    margin-bottom: 4px;
+  }
+
+  .design-subtitle {
+    font-size: 14px;
+    margin-bottom: 20px;
+  }
+
   .premium-hero {
-    padding: 20px;
+    padding: 18px;
   }
 
   .premium-hero-main {
     flex-direction: column;
   }
 
+  .premium-hero h1 {
+    font-size: 22px;
+  }
+
+  .premium-icon {
+    width: 56px;
+    height: 56px;
+    border-radius: 12px;
+    font-size: 18px;
+  }
+
+  .premium-tabs {
+    gap: 14px;
+    margin-bottom: 16px;
+  }
+
+  .premium-tabs button {
+    font-size: 13px;
+    padding: 10px 0 11px;
+  }
+
+  .premium-layout {
+    gap: 18px;
+  }
+
   .premium-side {
     grid-template-columns: 1fr;
+  }
+
+  .premium-cta {
+    gap: 10px;
+  }
+
+  .data-table th,
+  .data-table td {
+    padding: 10px 10px;
+    font-size: 12px;
+  }
+
+  .stat-card {
+    padding: 14px 16px;
   }
 }

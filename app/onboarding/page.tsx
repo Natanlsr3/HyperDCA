@@ -264,12 +264,37 @@ function OnboardingContent() {
 
   if (!authenticated) {
     return (
-      <div className="card text-center space-y-4 max-w-md mx-auto">
-        <h1 className="text-xl font-bold">Get started</h1>
-        <p className="text-zinc-400 text-sm">Sign in with email to create your HyperDCA account.</p>
-        <button className="btn w-full" onClick={login}>
-          Sign in with Privy
-        </button>
+      <div className="mx-auto max-w-[560px] space-y-6">
+        <div className="text-center">
+          <div className="mx-auto mb-[14px] grid h-[48px] w-[48px] place-items-center rounded-[12px] bg-[var(--accentSoft)]">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2 2 7l10 5 10-5-10-5Z" /><path d="m2 17 10 5 10-5" /><path d="m2 12 10 5 10-5" /></svg>
+          </div>
+          <h1 className="mb-[6px] text-[26px] font-extrabold tracking-[-0.03em] text-[var(--text)]">Set up your account</h1>
+          <p className="mx-auto max-w-[400px] text-[15px] text-[var(--text2)]">Three steps to start automated DCA on HyperLiquid.</p>
+        </div>
+        <div className="space-y-[12px]">
+          {[
+            { num: "1", title: "Sign in & create wallet", desc: "Log in with email or Google. We generate a secure embedded wallet automatically.", icon: "M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13.8 12H3" },
+            { num: "2", title: "Approve trading agent", desc: "Sign two on-chain approvals — the agent can trade for you but cannot withdraw funds.", icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0 1 12 2.944a11.955 11.955 0 0 1-8.618 3.04A12.02 12.02 0 0 0 3 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016Z" },
+            { num: "3", title: "Pick a basket & invest", desc: "Choose a strategy, set your DCA amount and interval, and the bot handles the rest.", icon: "M12 2 2 7l10 5 10-5-10-5Z" },
+          ].map((s) => (
+            <div key={s.num} className="card flex items-start gap-[14px] p-[18px]">
+              <div className="grid h-[36px] w-[36px] flex-none place-items-center rounded-[9px] bg-[var(--accentSoft)]">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={s.icon} /></svg>
+              </div>
+              <div>
+                <h3 className="mb-[2px] text-[14px] font-bold text-[var(--text)]">{s.num}. {s.title}</h3>
+                <p className="m-0 text-[13px] leading-[1.5] text-[var(--text2)]">{s.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className="text-center">
+          <button className="btn px-[24px] py-[11px] text-[14px]" onClick={login}>Sign in to get started</button>
+        </div>
+        <p className="text-center text-[12px] text-[var(--text3)]">
+          Your agent key is encrypted and can only trade — it cannot withdraw or transfer funds.
+        </p>
       </div>
     );
   }

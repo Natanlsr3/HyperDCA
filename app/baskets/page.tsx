@@ -3,6 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { BasketCard } from "@/components/baskets/basket-card";
+import { formatTheme } from "@/lib/design-system";
 import { readJsonResponse } from "@/lib/http/client";
 
 interface BasketAsset {
@@ -74,7 +75,7 @@ function BasketsContent() {
       <h1 className="design-h1">{title}</h1>
       <p className="design-subtitle">{subtitle}</p>
 
-      <div className="mb-[14px] flex items-baseline justify-between gap-4">
+      <div className="mb-[14px] flex flex-col gap-3 sm:flex-row sm:items-baseline sm:justify-between">
         <h2 className="design-h2">{view === "discover" ? "Trending" : "Strategies"}</h2>
         <div className="flex items-center gap-[10px]">
           <span className="text-[12.5px] font-medium text-[var(--text3)]">{filtered.length} baskets</span>
@@ -87,24 +88,25 @@ function BasketsContent() {
         </div>
       </div>
 
-      <div className="mb-[18px] max-w-[440px]">
-        <input
-          className="input"
-          placeholder="Search baskets, assets, or creators..."
-          value={query}
-          onChange={(event) => setQuery(event.target.value)}
-        />
-      </div>
-
       {loading ? (
         <p className="text-[var(--text3)]">Loading baskets...</p>
       ) : filtered.length === 0 ? (
-        <div className="card text-sm text-[var(--text2)]">
-          {view === "mine"
-            ? "No owned baskets yet. Create and publish a strategy once Supabase is connected."
-            : view === "following"
-              ? "No followed baskets yet. Follow a public basket from Discover to see it here."
-              : "No baskets found. If you expected live data, check your Supabase env vars in `.env.local`."}
+        <div className="card flex flex-col items-center py-[40px] text-center">
+          <div className="mb-[12px] grid h-[48px] w-[48px] place-items-center rounded-[12px] bg-[var(--surface3)]">
+            <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--text3)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+              <path d={view === "following" ? "M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78Z" : view === "mine" ? "M12 2 2 7l10 5 10-5-10-5Zm0 13 10-5m-10 5L2 12" : "M21 21l-6-6m2-5a7 7 0 1 1-14 0 7 7 0 0 1 14 0Z"} />
+            </svg>
+          </div>
+          <p className="mb-[4px] text-[15px] font-semibold text-[var(--text)]">
+            {view === "following" ? "No followed baskets yet" : view === "mine" ? "No baskets created yet" : "No baskets found"}
+          </p>
+          <p className="m-0 max-w-[320px] text-[13px] text-[var(--text2)]">
+            {view === "mine"
+              ? "Create and publish your own thematic strategy to manage it here."
+              : view === "following"
+                ? "Follow baskets from Discover to track them here and get notifications."
+                : "Try adjusting your search or check your database connection."}
+          </p>
         </div>
       ) : (
         <div data-testid="basket-grid" className="basket-grid mb-[42px]">
@@ -143,7 +145,7 @@ function BasketsContent() {
                 <td className="mono text-[12.5px] font-semibold text-[var(--text3)]">#{index + 1}</td>
                 <td>
                   <div className="text-[14px] font-semibold text-[var(--text)]">{basket.name}</div>
-                  <div className="mono text-[11.5px] font-medium text-[var(--text3)]">{basket.theme}</div>
+                  <div className="mono text-[11.5px] font-medium text-[var(--text3)]">{formatTheme(basket.theme)}</div>
                 </td>
                 <td className="mono text-right text-[13.5px] font-semibold text-[var(--pos)]">{((basket.roi_30d ?? 0) * 100).toFixed(1)}%</td>
                 <td className="mono text-right text-[13px] font-medium text-[var(--text)]">{((basket.hit_rate ?? 0) * 100).toFixed(0)}%</td>

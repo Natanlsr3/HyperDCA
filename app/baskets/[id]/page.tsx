@@ -8,6 +8,7 @@ import { CompositionChart, PerformanceChart } from "@/components/baskets/charts"
 import { PeriodSelector } from "@/components/period-selector";
 import { getPremiumTemplateForBasket } from "@/lib/baskets/templates";
 import type { PremiumBasketTemplate } from "@/lib/baskets/templates";
+import { diversificationScore, formatTheme } from "@/lib/design-system";
 import { readJsonResponse } from "@/lib/http/client";
 import { makeHistorySeries, periodLabel, seriesDelta, type CustomRange, type HistoryPeriod } from "@/lib/market/history";
 
@@ -176,7 +177,7 @@ function BasketDetailView({
 
   return (
     <div>
-      <Link href="/baskets" className="mb-[18px] inline-flex text-[13px] font-semibold text-[var(--text2)] no-underline">‹ Discover</Link>
+      <Link href="/baskets" className="mb-[14px] inline-flex text-[13px] font-semibold text-[var(--text2)] no-underline sm:mb-[18px]">‹ Discover</Link>
 
       <section className="premium-hero">
         <div className="premium-hero-main">
@@ -186,13 +187,13 @@ function BasketDetailView({
               <h1>{basket.name}</h1>
               <span className="basket-tag">{premium?.volatility ?? "Strategy basket"}</span>
             </div>
-            <p className="premium-manager">by {premium?.creator ?? basket.theme}</p>
+            <p className="premium-manager">by {premium?.creator ?? formatTheme(basket.theme)}</p>
             <p className="premium-description">{premium?.shortDescription ?? basket.description}</p>
           </div>
         </div>
         <aside className="premium-cta">
-          <Metric label="ROI 30d" value={`${((basket.roi_30d ?? 0) * 100).toFixed(1)}%`} tone="positive" />
-          <Metric label="Diversification" value={premium ? `${premium.diversification.score}/100` : "—"} />
+          <Metric label="ROI 30d" value={`${(basket.roi_30d ?? 0) >= 0 ? "+" : ""}${((basket.roi_30d ?? 0) * 100).toFixed(1)}%`} tone={(basket.roi_30d ?? 0) > 0 ? "positive" : (basket.roi_30d ?? 0) < 0 ? "negative" : undefined} />
+          <Metric label="Diversification" value={`${premium ? premium.diversification.score : diversificationScore(basket.basket_assets.map((a) => Number(a.weight)))}/100`} />
           <button className="btn w-full py-[11px]" onClick={() => setMirrorOpen(true)}>Mirror basket</button>
           <button className="btn-secondary w-full py-[11px]" disabled={authUnavailable} onClick={onFollow}>Add to watchlist</button>
         </aside>
@@ -222,7 +223,7 @@ function BasketDetailView({
           {activeTab === "agent" ? <AgentTab premium={premium} basket={basket} /> : null}
         </main>
         <aside className="premium-side">
-          <Metric label="Minimum mirror amount" value={`$${(premium?.minimumInvestmentUsd ?? 250).toLocaleString()}`} />
+          <Metric label="Minimum mirror amount" value={`$${(premium?.minimumInvestmentUsd ?? 50).toLocaleString()}`} />
           <Metric label="Hit rate" value={`${((basket.hit_rate ?? 0) * 100).toFixed(0)}%`} />
           <Metric label="Followers" value={`${basket.followers_count ?? 0}`} />
           {premium ? (

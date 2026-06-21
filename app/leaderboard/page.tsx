@@ -3,7 +3,7 @@
 import { Suspense, useEffect, useMemo, useState } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { ASSET_COLORS } from "@/lib/design-system";
+import { ASSET_COLORS, displayCoin, formatTheme } from "@/lib/design-system";
 import { readJsonResponse } from "@/lib/http/client";
 
 interface BasketAsset {
@@ -65,7 +65,7 @@ function LeaderboardContent() {
 
   return (
     <div>
-      <div className="mb-[26px] flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
+      <div className="mb-[20px] flex flex-col gap-4 sm:mb-[26px] lg:flex-row lg:items-end lg:justify-between">
         <div>
           <h1 className="design-h1">Leaderboard</h1>
           <p className="design-subtitle mb-0">
@@ -86,7 +86,7 @@ function LeaderboardContent() {
         <SummaryCard label="Avg. hit rate" value={`${(avgHitRate * 100).toFixed(0)}%`} />
       </div>
 
-      <div className="mb-[26px] grid gap-[18px] lg:grid-cols-3">
+      <div className="mb-[26px] grid gap-[14px] sm:gap-[18px] md:grid-cols-2 lg:grid-cols-3">
         {topRows.map((row) => (
           <Link key={row.id} href={`/baskets/${row.id}`} className="card block p-[20px] no-underline transition hover:-translate-y-0.5 hover:border-[var(--borderStrong)] hover:shadow-[var(--shadowHover)]">
             <div className="mb-[14px] flex items-start justify-between gap-3">
@@ -95,25 +95,28 @@ function LeaderboardContent() {
                   #{row.rank}
                 </div>
                 <h2 className="m-0 text-[18px] font-bold tracking-[-0.01em] text-[var(--text)]">{row.name}</h2>
-                <p className="mono mt-1 text-[12px] font-medium text-[var(--text3)]">{row.theme ?? "Hyperliquid"}</p>
+                <p className="mono mt-1 text-[12px] font-medium text-[var(--text3)]">{formatTheme(row.theme ?? "Hyperliquid")}</p>
               </div>
               <span className="basket-roi is-positive">{pct(row.roi_30d, true)}</span>
             </div>
             <div className="mb-[14px] flex flex-wrap gap-[6px]">
-              {(row.basket_assets ?? []).slice(0, 4).map((asset) => (
-                <span
-                  key={asset.coin}
-                  className="asset-chip"
-                  style={{
-                    color: ASSET_COLORS[asset.coin] ?? "#64748B",
-                    background: "var(--surface2)",
-                    borderColor: "var(--border)",
-                  }}
-                >
-                  {asset.coin}
-                  <span className="opacity-65">{Math.round(Number(asset.weight) * 100)}%</span>
-                </span>
-              ))}
+              {(row.basket_assets ?? []).slice(0, 4).map((asset) => {
+                const ticker = displayCoin(asset.coin);
+                return (
+                  <span
+                    key={asset.coin}
+                    className="asset-chip"
+                    style={{
+                      color: ASSET_COLORS[ticker] ?? "#64748B",
+                      background: "var(--surface2)",
+                      borderColor: "var(--border)",
+                    }}
+                  >
+                    {ticker}
+                    <span className="opacity-65">{Math.round(Number(asset.weight) * 100)}%</span>
+                  </span>
+                );
+              })}
             </div>
             <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-3">
               <MiniMetric label="Hit rate" value={`${((row.hit_rate ?? 0) * 100).toFixed(0)}%`} />
@@ -123,16 +126,16 @@ function LeaderboardContent() {
         ))}
       </div>
 
-      <div className="overflow-hidden rounded-[12px] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow)]">
+      <div className="overflow-x-auto rounded-[12px] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow)]">
         <table className="data-table">
           <thead>
             <tr>
               <th>Rank</th>
               <th>Basket</th>
-              <th>Assets</th>
+              <th className="hidden md:table-cell">Assets</th>
               <th className="text-right">ROI 30d</th>
-              <th className="text-right">ROI YTD</th>
-              <th className="text-right">Hit rate</th>
+              <th className="hidden lg:table-cell text-right">ROI YTD</th>
+              <th className="hidden md:table-cell text-right">Hit rate</th>
               <th className="text-right">Followers</th>
             </tr>
           </thead>
@@ -144,20 +147,20 @@ function LeaderboardContent() {
                   <Link href={`/baskets/${row.id}`} className="text-[14px] font-semibold text-[var(--text)] no-underline">
                     {row.name}
                   </Link>
-                  <div className="mono text-[11.5px] font-medium text-[var(--text3)]">{row.theme ?? "Hyperliquid"}</div>
+                  <div className="mono text-[11.5px] font-medium text-[var(--text3)]">{formatTheme(row.theme ?? "Hyperliquid")}</div>
                 </td>
-                <td>
+                <td className="hidden md:table-cell">
                   <div className="flex flex-wrap gap-[5px]">
                     {(row.basket_assets ?? []).slice(0, 4).map((asset) => (
                       <span key={asset.coin} className="rounded-[5px] bg-[var(--surface3)] px-[7px] py-[3px] mono text-[11px] font-semibold text-[var(--text2)]">
-                        {asset.coin}
+                        {displayCoin(asset.coin)}
                       </span>
                     ))}
                   </div>
                 </td>
-                <td className="mono text-right text-[13.5px] font-semibold text-[var(--pos)]">{pct(row.roi_30d)}</td>
-                <td className="mono text-right text-[13px] font-medium text-[var(--text)]">{pct(row.roi_ytd)}</td>
-                <td className="mono text-right text-[13px] font-medium text-[var(--text)]">{((row.hit_rate ?? 0) * 100).toFixed(0)}%</td>
+                <td className={`mono text-right text-[13.5px] font-semibold ${(row.roi_30d ?? 0) >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}>{pct(row.roi_30d)}</td>
+                <td className="hidden lg:table-cell mono text-right text-[13px] font-medium text-[var(--text)]">{pct(row.roi_ytd)}</td>
+                <td className="hidden md:table-cell mono text-right text-[13px] font-medium text-[var(--text)]">{((row.hit_rate ?? 0) * 100).toFixed(0)}%</td>
                 <td className="mono text-right text-[13px] font-medium text-[var(--text2)]">{compact(row.followers_count)}</td>
               </tr>
             ))}

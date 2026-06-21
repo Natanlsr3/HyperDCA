@@ -5,7 +5,10 @@ import { Nav } from "@/components/nav";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "HyperDCA",
+  title: {
+    default: "HyperDCA",
+    template: "%s | HyperDCA",
+  },
   description: "Themed HyperLiquid perp baskets with automated DCA",
 };
 

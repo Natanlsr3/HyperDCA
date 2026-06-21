@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { ASSET_COLORS } from "@/lib/design-system";
+import { ASSET_COLORS, formatTheme } from "@/lib/design-system";
 
 interface BasketAsset {
   coin: string;
@@ -41,11 +41,28 @@ function displayCoin(coin: string) {
   return idx >= 0 ? coin.slice(idx + 1) : coin;
 }
 
-function sparkPoints(seed: number, roi = 0) {
+function hashStr(str: string) {
+  let h = 5381;
+  for (let i = 0; i < str.length; i++) h = ((h << 5) + h + str.charCodeAt(i)) | 0;
+  return Math.abs(h);
+}
+
+function sparkPoints(seed: number, roi = 0, id = "") {
+  const h = id ? hashStr(id) : seed * 2654435761;
+  const a = ((h >> 0) & 0xff) / 255;
+  const b = ((h >> 8) & 0xff) / 255;
+  const c = ((h >> 16) & 0xff) / 255;
+  const freq1 = 1.5 + a * 1.5;
+  const freq2 = 2.2 + b * 2.0;
+  const amp1 = 3 + c * 4;
+  const amp2 = 1.5 + a * 2.5;
+  const phase = b * Math.PI * 2;
+
   return Array.from({ length: 18 }, (_, index) => {
     const x = (index / 17) * 120;
-    const trend = roi * 18 * (index / 17);
-    const wave = Math.sin((index + seed) / 2) * 4 + Math.cos((index + seed) / 3) * 2;
+    const t = index / 17;
+    const trend = roi * 18 * t;
+    const wave = Math.sin(t * freq1 * Math.PI + phase) * amp1 + Math.cos(t * freq2 * Math.PI + phase * 0.7) * amp2;
     const y = 25 - trend - wave;
     return `${x.toFixed(1)},${Math.max(4, Math.min(30, y)).toFixed(1)}`;
   }).join(" ");
@@ -54,6 +71,7 @@ function sparkPoints(seed: number, roi = 0) {
 export function BasketCard({ basket }: { basket: Basket }) {
   const positive = Number(basket.roi_30d ?? 0) >= 0;
   const seed = basket.name.length + basket.basket_assets.length;
+  const sparkId = `${basket.id}-${basket.theme}`;
 
   return (
     <article data-testid="basket-card" className="basket-card">
@@ -63,14 +81,14 @@ export function BasketCard({ basket }: { basket: Basket }) {
             <h3 className="basket-card-title">{basket.name}</h3>
             {basket.roi_30d && basket.roi_30d > 0.25 ? <span className="basket-tag">TRENDING</span> : null}
           </div>
-          <p className="basket-creator">{basket.theme}</p>
+          <p className="basket-creator">{formatTheme(basket.theme)}</p>
         </div>
         <span className={`basket-roi ${positive ? "is-positive" : "is-negative"}`}>{pct(basket.roi_30d)}</span>
       </div>
 
       <svg viewBox="0 0 120 32" preserveAspectRatio="none" className="h-[38px] w-full">
         <polyline
-          points={sparkPoints(seed, basket.roi_30d)}
+          points={sparkPoints(seed, basket.roi_30d, sparkId)}
           fill="none"
           stroke={positive ? "var(--pos)" : "var(--neg)"}
           strokeWidth="1.6"

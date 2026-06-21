@@ -18,7 +18,7 @@ export function Nav() {
 }
 
 function StaticShell() {
-  return <Shell walletLabel="Not connected" walletMeta="Sign in to start" statusLabel="Demo mode" />;
+  return <Shell walletLabel="Not connected" walletMeta="Sign in to start" statusLabel="Demo mode" isConnected={false} />;
 }
 
 function PrivyShell() {
@@ -51,6 +51,7 @@ function PrivyShell() {
       statusLabel={ready && authenticated ? undefined : "Sign in"}
       onStatusClick={authenticated ? logout : login}
       showOnboardingLink={authenticated && !onboarded}
+      isConnected={ready && authenticated}
     />
   );
 }
@@ -61,12 +62,14 @@ function Shell({
   statusLabel,
   onStatusClick,
   showOnboardingLink,
+  isConnected,
 }: {
   walletLabel: string;
   walletMeta: string;
   statusLabel?: string;
   onStatusClick?: () => void;
   showOnboardingLink?: boolean;
+  isConnected?: boolean;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -139,21 +142,23 @@ function Shell({
               <span>Account setup</span>
             </Link>
           )}
-          <Link
-            href="/debug/status"
-            className={`flex items-center justify-between rounded-[8px] border border-[var(--border)] px-[10px] py-[8px] text-[12px] font-semibold no-underline ${
-              pathname === "/debug/status"
-                ? "bg-[var(--accentSoft)] text-[var(--accentText)]"
-                : "bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)]"
-            }`}
-          >
-            <span>Diagnostics</span>
-            <span className="mono text-[10px] uppercase">Dev</span>
-          </Link>
+          {process.env.NODE_ENV === "development" && (
+            <Link
+              href="/debug/status"
+              className={`flex items-center justify-between rounded-[8px] border border-[var(--border)] px-[10px] py-[8px] text-[12px] font-semibold no-underline ${
+                pathname === "/debug/status"
+                  ? "bg-[var(--accentSoft)] text-[var(--accentText)]"
+                  : "bg-[var(--surface2)] text-[var(--text3)] hover:text-[var(--text)]"
+              }`}
+            >
+              <span>Diagnostics</span>
+              <span className="mono text-[10px] uppercase">Dev</span>
+            </Link>
+          )}
           <div className="rounded-[8px] border border-[var(--border)] bg-[var(--surface3)] p-[14px]">
           <div className="mb-2 text-[10.5px] font-semibold uppercase tracking-[0.06em] text-[var(--text3)]">Wallet</div>
           <div className="mb-[6px] flex items-center gap-[7px]">
-            <span className="h-[7px] w-[7px] rounded-full bg-[var(--pos)] shadow-[0_0_0_3px_var(--posSoft)]" />
+            <span className={`h-[7px] w-[7px] rounded-full ${isConnected ? "bg-[var(--pos)] shadow-[0_0_0_3px_var(--posSoft)]" : "bg-[var(--text3)]"}`} />
             <span className="mono text-[12.5px] font-medium text-[var(--text)]">{walletLabel}</span>
           </div>
           <div className="mono text-[13px] font-semibold text-[var(--text)]">{walletMeta}</div>
@@ -192,10 +197,41 @@ function Shell({
           <button className="btn-secondary hidden sm:block" onClick={onStatusClick}>{statusLabel}</button>
         ) : null}
         <div className="hidden items-center gap-2 rounded-full border border-[var(--border)] bg-[var(--surface)] px-[13px] py-[7px] sm:flex">
-          <span className="h-[7px] w-[7px] rounded-full bg-[var(--pos)]" />
+          <span className={`h-[7px] w-[7px] rounded-full ${isConnected ? "bg-[var(--pos)]" : "bg-[var(--text3)]"}`} />
           <span className="mono text-[12.5px] font-medium text-[var(--text)]">{walletLabel}</span>
         </div>
       </header>
+
+      <nav className="app-bottombar">
+        {navItems.map((item) => {
+          const active = pathname === item.href || (item.href === "/baskets" && pathname.startsWith("/baskets"));
+          return (
+            <Link
+              key={item.href}
+              href={item.href}
+              className={`flex flex-1 flex-col items-center gap-[3px] py-[8px] text-[10.5px] font-semibold no-underline transition ${
+                active ? "text-[var(--accentText)]" : "text-[var(--text3)]"
+              }`}
+            >
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={active ? "2" : "1.6"} strokeLinecap="round" strokeLinejoin="round">
+                <path d={item.icon} />
+              </svg>
+              {item.label}
+            </Link>
+          );
+        })}
+        {statusLabel ? (
+          <button
+            className="flex flex-1 flex-col items-center gap-[3px] border-0 bg-transparent py-[8px] text-[10.5px] font-semibold text-[var(--text3)] transition"
+            onClick={onStatusClick}
+          >
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M13.8 12H3" />
+            </svg>
+            {statusLabel}
+          </button>
+        ) : null}
+      </nav>
     </>
   );
 }

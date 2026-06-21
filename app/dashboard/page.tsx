@@ -195,11 +195,29 @@ function DashboardContent() {
 
   if (!authenticated) {
     return (
-      <div className="card text-center space-y-4">
-        <p>Sign in to view your HyperLiquid portfolio.</p>
-        <button className="btn" onClick={login}>
-          Sign in
-        </button>
+      <div className="mx-auto max-w-[640px] space-y-6">
+        <div className="text-center">
+          <h1 className="design-h1">Portfolio</h1>
+          <p className="design-subtitle">Sign in to manage your positions, schedules, and DCA strategies on HyperLiquid.</p>
+        </div>
+        <div className="grid gap-[14px] md:grid-cols-3">
+          {[
+            { icon: "M3 3v18h18M7 16l4-4 4 4 6-8", title: "Live P&L tracking", desc: "Real-time account value, unrealized PnL, and position monitoring" },
+            { icon: "M12 8v4l3 3m6-3a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z", title: "Active schedules", desc: "View and manage your DCA automations across all baskets" },
+            { icon: "M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0 1 12 2.944a11.955 11.955 0 0 1-8.618 3.04A12.02 12.02 0 0 0 3 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016Z", title: "Guardrail alerts", desc: "Auto-monitoring of leverage and liquidation risk per cycle" },
+          ].map((f) => (
+            <div key={f.title} className="card flex flex-col items-center p-[20px] text-center">
+              <div className="mb-[10px] grid h-[40px] w-[40px] place-items-center rounded-[10px] bg-[var(--accentSoft)]">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d={f.icon} /></svg>
+              </div>
+              <h3 className="mb-[4px] text-[14px] font-bold text-[var(--text)]">{f.title}</h3>
+              <p className="m-0 text-[12.5px] leading-[1.5] text-[var(--text2)]">{f.desc}</p>
+            </div>
+          ))}
+        </div>
+        <div className="text-center">
+          <button className="btn px-[24px] py-[11px] text-[14px]" onClick={login}>Sign in to view portfolio</button>
+        </div>
       </div>
     );
   }
@@ -317,7 +335,7 @@ function DashboardContent() {
         <PerformanceChart series={portfolioSeries} />
       </section>
 
-      <div className="grid sm:grid-cols-2 lg:grid-cols-4 gap-4">
+      <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
         <div className="card">
           <p className="label">Account value</p>
           <p className="text-2xl font-semibold">${displayedAccountValue.toFixed(2)}</p>
