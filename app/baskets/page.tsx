@@ -1,5 +1,6 @@
 "use client";
 
+import { usePrivy } from "@privy-io/react-auth";
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { BasketCard } from "@/components/baskets/basket-card";
@@ -34,11 +35,17 @@ export default function BasketsPage() {
 
 function BasketsContent() {
   const searchParams = useSearchParams();
+  const { authenticated, getAccessToken } = usePrivy();
   const [baskets, setBaskets] = useState<Basket[]>([]);
   const [query, setQuery] = useState(searchParams.get("q") ?? searchParams.get("creator") ?? "");
   const [sortBy, setSortBy] = useState("roi_30d");
   const [loading, setLoading] = useState(true);
   const view = searchParams.get("view") ?? "discover";
+
+  // IDs of baskets the user follows or has schedules for
+  const [followedIds, setFollowedIds] = useState<Set<string>>(new Set());
+  const [scheduleIds, setScheduleIds] = useState<Set<string>>(new Set());
+  const [userDataLoading, setUserDataLoading] = useState(false);
 
   useEffect(() => {
     setLoading(true);
@@ -48,6 +55,37 @@ function BasketsContent() {
       .finally(() => setLoading(false));
   }, [sortBy]);
 
+  // Fetch user-specific data for Following/My baskets views
+  useEffect(() => {
+    if (!authenticated || view === "discover") return;
+    setUserDataLoading(true);
+    (async () => {
+      try {
+        const token = await getAccessToken();
+        const headers = { Authorization: `Bearer ${token}` };
+        const [portRes, schedRes] = await Promise.all([
+          fetch("/api/portfolio", { headers }),
+          fetch("/api/schedules", { headers }),
+        ]);
+        const port = await portRes.json();
+        const sched = await schedRes.json();
+
+        const fIds = new Set<string>();
+        for (const f of port.baskets_followed ?? []) {
+          if (f.baskets?.id) fIds.add(f.baskets.id);
+        }
+        setFollowedIds(fIds);
+
+        const sIds = new Set<string>();
+        for (const s of sched.schedules ?? []) {
+          if (s.basket_id) sIds.add(s.basket_id);
+        }
+        setScheduleIds(sIds);
+      } catch { /* silent */ }
+      finally { setUserDataLoading(false); }
+    })();
+  }, [authenticated, getAccessToken, view]);
+
   const filtered = useMemo(
     () => {
       const byQuery = baskets.filter((basket) =>
@@ -56,19 +94,21 @@ function BasketsContent() {
           .includes(query.toLowerCase()),
       );
 
-      if (view === "following") return byQuery.slice(0, 2);
-      if (view === "mine") return byQuery.filter((basket) => basket.theme?.toLowerCase().includes("cipher"));
+      if (view === "following") return byQuery.filter((b) => followedIds.has(b.id));
+      if (view === "mine") return byQuery.filter((b) => scheduleIds.has(b.id));
       return byQuery;
     },
-    [baskets, query, view],
+    [baskets, query, view, followedIds, scheduleIds],
   );
   const title = view === "following" ? "Following" : view === "mine" ? "My baskets" : "Discover baskets";
   const subtitle =
     view === "following"
       ? "Baskets you follow, ready for monitoring or mirroring."
       : view === "mine"
-        ? "Strategies you own or manage."
+        ? "Baskets where you have active DCA schedules."
         : "Explore and mirror trading strategies running live on Hyperliquid.";
+
+  const isViewLoading = loading || ((view === "following" || view === "mine") && userDataLoading);
 
   return (
     <div>
@@ -88,7 +128,7 @@ function BasketsContent() {
         </div>
       </div>
 
-      {loading ? (
+      {isViewLoading ? (
         <p className="text-[var(--text3)]">Loading baskets...</p>
       ) : filtered.length === 0 ? (
         <div className="card flex flex-col items-center py-[40px] text-center">
@@ -98,11 +138,11 @@ function BasketsContent() {
             </svg>
           </div>
           <p className="mb-[4px] text-[15px] font-semibold text-[var(--text)]">
-            {view === "following" ? "No followed baskets yet" : view === "mine" ? "No baskets created yet" : "No baskets found"}
+            {view === "following" ? "No followed baskets yet" : view === "mine" ? "No active schedules" : "No baskets found"}
           </p>
           <p className="m-0 max-w-[320px] text-[13px] text-[var(--text2)]">
             {view === "mine"
-              ? "Create and publish your own thematic strategy to manage it here."
+              ? "Start a DCA schedule on any basket to see it here."
               : view === "following"
                 ? "Follow baskets from Discover to track them here and get notifications."
                 : "Try adjusting your search or check your database connection."}

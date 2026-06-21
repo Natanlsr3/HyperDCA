@@ -45,50 +45,10 @@ interface MirrorExecution {
   baskets: { name: string } | null;
 }
 
-const strategyPortfolios = [
-  {
-    id: "core-compound",
-    name: "Core compound",
-    strategy: "Majors momentum with controlled leverage",
-    drift: 0.24,
-    accountValue: 12480,
-    carryPct: 8.4,
-    positions: [
-      { coin: "BTC", weight: 35 },
-      { coin: "ETH", weight: 28 },
-      { coin: "SOL", weight: 22 },
-      { coin: "HYPE", weight: 15 },
-    ],
-  },
-  {
-    id: "ai-beta",
-    name: "AI beta",
-    strategy: "Higher volatility equity-perp sleeve",
-    drift: 0.36,
-    accountValue: 8650,
-    carryPct: 12.1,
-    positions: [
-      { coin: "NVDA", weight: 40 },
-      { coin: "AMD", weight: 25 },
-      { coin: "TSLA", weight: 20 },
-      { coin: "HYPE", weight: 15 },
-    ],
-  },
-  {
-    id: "carry-defense",
-    name: "Carry defense",
-    strategy: "Funding-aware defensive rotation",
-    drift: 0.13,
-    accountValue: 5920,
-    carryPct: 5.7,
-    positions: [
-      { coin: "ETH", weight: 34 },
-      { coin: "LINK", weight: 24 },
-      { coin: "AAVE", weight: 22 },
-      { coin: "UNI", weight: 20 },
-    ],
-  },
-];
+function displayCoin(coin: string) {
+  const idx = coin.indexOf(":");
+  return idx >= 0 ? coin.slice(idx + 1) : coin;
+}
 
 export default function DashboardPage() {
   if (!process.env.NEXT_PUBLIC_PRIVY_APP_ID) return <AuthUnavailable />;
@@ -116,21 +76,28 @@ function DashboardContent() {
   const [portfolioMessage, setPortfolioMessage] = useState<string | null>(null);
   const [schedulesError, setSchedulesError] = useState<string | null>(null);
   const [onboarded, setOnboarded] = useState(true);
-  const [activePortfolioId, setActivePortfolioId] = useState(strategyPortfolios[0].id);
   const [period, setPeriod] = useState<HistoryPeriod>("1m");
   const [customRange, setCustomRange] = useState<CustomRange>({});
 
-  const activePortfolio = useMemo(
-    () => strategyPortfolios.find((portfolio) => portfolio.id === activePortfolioId) ?? strategyPortfolios[0],
-    [activePortfolioId],
-  );
+  // Compute real allocation from positions
+  const realAllocation = useMemo(() => {
+    if (positions.length === 0) return [];
+    const totalValue = positions.reduce((sum, p) => sum + Math.abs(p.positionValue), 0);
+    if (totalValue === 0) return [];
+    return positions
+      .map((p) => ({
+        coin: displayCoin(p.coin),
+        weight: Math.round((Math.abs(p.positionValue) / totalValue) * 100),
+        value: Math.abs(p.positionValue),
+      }))
+      .sort((a, b) => b.weight - a.weight);
+  }, [positions]);
+
   const portfolioSeries = useMemo(
-    () => makeHistorySeries(activePortfolio.id, period, customRange, activePortfolio.drift),
-    [activePortfolio, customRange, period],
+    () => makeHistorySeries("portfolio", period, customRange, 0.18),
+    [customRange, period],
   );
   const portfolioDelta = seriesDelta(portfolioSeries);
-  const displayedAccountValue = accountValue > 0 ? accountValue : activePortfolio.accountValue;
-  const displayedCarry = carryPct ?? activePortfolio.carryPct;
 
   const refreshPortfolio = useCallback(async () => {
     setHlLoading(true);
@@ -224,46 +191,40 @@ function DashboardContent() {
 
   return (
     <div className="space-y-6">
-      <div className="flex flex-col gap-4 lg:flex-row lg:items-end lg:justify-between">
-        <div>
-          <h1 className="design-h1">Portfolio</h1>
-          <p className="design-subtitle mb-0">Switch strategies and inspect how the selected allocation behaved over time.</p>
-        </div>
-        <select className="input w-full lg:w-[280px]" value={activePortfolioId} onChange={(event) => setActivePortfolioId(event.target.value)}>
-          {strategyPortfolios.map((portfolio) => (
-            <option key={portfolio.id} value={portfolio.id}>{portfolio.name}</option>
-          ))}
-        </select>
+      <div>
+        <h1 className="design-h1">Portfolio</h1>
+        <p className="design-subtitle mb-0">Your HyperLiquid positions, schedules, and performance.</p>
       </div>
 
       {!onboarded && (
-        <div className="card border-amber-800 bg-amber-950/30 text-amber-200 text-sm">
+        <div className="rounded-[8px] border border-amber-300 bg-amber-50 px-4 py-3 text-[13px] text-amber-800">
           Account setup incomplete — approve your agent on HyperLiquid before schedules can execute.{" "}
-          <Link href="/onboarding" className="text-amber-400 underline">
+          <Link href="/onboarding" className="font-semibold text-amber-900 underline">
             Complete setup
           </Link>
         </div>
       )}
 
       {portfolioMessage && (
-        <p className="text-zinc-500 text-sm">{portfolioMessage}</p>
+        <p className="text-[13px] text-[var(--text3)]">{portfolioMessage}</p>
       )}
 
       {guardrail && positions.length > 0 && (
-        <div className="card border-red-800 bg-red-950/30 text-red-300">
+        <div className="rounded-[8px] border border-[var(--neg)] bg-[var(--negSoft)] px-4 py-3 text-[13px] font-medium text-[var(--neg)]">
           Liquidation guardrail triggered — review leverage and margin.
         </div>
       )}
 
+      {/* Wallet card */}
       <div className="card space-y-3">
         <div className="flex items-center justify-between gap-3 flex-wrap">
           <div>
             <p className="label">Your HyperLiquid account (master wallet)</p>
-            <p className="font-mono text-sm break-all">{address ?? "Creating wallet..."}</p>
+            <p className="mono text-[13px] text-[var(--text)] break-all">{address ?? "Creating wallet..."}</p>
           </div>
           {address && (
             <button
-              className="text-xs border border-zinc-700 rounded px-3 py-1 text-zinc-300"
+              className="btn-secondary px-3 py-1 text-[12px]"
               onClick={() => {
                 navigator.clipboard.writeText(address);
                 setCopied(true);
@@ -274,58 +235,41 @@ function DashboardContent() {
             </button>
           )}
         </div>
-        <div className="grid grid-cols-2 gap-3 border-t border-zinc-800 pt-3">
+        <div className="grid grid-cols-2 gap-3 border-t border-[var(--border)] pt-3">
           <div>
             <p className="label">USDC on Arbitrum One</p>
-            <p className="text-lg font-semibold">
+            <p className="text-[18px] font-semibold text-[var(--text)]">
               {balLoading && usdc === null ? "..." : `${(usdc ?? 0).toFixed(2)} USDC`}
             </p>
           </div>
           <div>
             <p className="label">ETH (for gas)</p>
-            <p className={`text-lg font-semibold ${eth !== null && eth < 0.00005 ? "text-red-400" : ""}`}>
+            <p className={`text-[18px] font-semibold ${eth !== null && eth < 0.00005 ? "text-[var(--neg)]" : "text-[var(--text)]"}`}>
               {balLoading && eth === null ? "..." : `${(eth ?? 0).toFixed(5)} ETH`}
             </p>
           </div>
         </div>
         {eth !== null && eth < 0.00005 && (
-          <p className="text-xs text-red-400">
-            No ETH for gas on Arbitrum One. Sending USDC to HyperLiquid is paid by you and needs a little ETH — send ~$1 of ETH to the address above to enable deposits.
+          <p className="text-[12px] text-[var(--neg)]">
+            No ETH for gas on Arbitrum One. Send ~$1 of ETH to the address above to enable deposits.
           </p>
         )}
-        <div className="text-xs text-zinc-500 leading-relaxed border-t border-zinc-800 pt-3">
-          <p className="text-zinc-400 font-medium mb-1">How to add funds</p>
-          1. Send <span className="text-zinc-300">USDC on Arbitrum</span> (plus a little ETH for gas) to the address above — from a CEX withdrawal to Arbitrum, or by bridging from another chain.<br />
-          2. Then use <span className="text-zinc-300">Deposit to HyperLiquid</span> below to move that USDC into your HL trading account. Your balance updates once it arrives.<br />
-          <span className="text-zinc-600">This wallet is managed in-app, so deposits happen here (not on app.hyperliquid.xyz). HyperLiquid&apos;s bridge is Arbitrum &harr; HL; trading is gas-free.</span>
+        <div className="text-[12px] leading-[1.6] text-[var(--text3)] border-t border-[var(--border)] pt-3">
+          <p className="font-medium text-[var(--text2)] mb-1">How to add funds</p>
+          1. Send <span className="text-[var(--text)]">USDC on Arbitrum</span> (plus a little ETH for gas) to the address above.<br />
+          2. Then use <span className="text-[var(--text)]">Deposit to HyperLiquid</span> below to move USDC into your HL trading account.
         </div>
-        <DepositForm
-          usdc={usdc}
-          eth={eth}
-          balLoading={balLoading}
-          refreshBalances={refreshBalances}
-        />
-        <WithdrawForm
-          withdrawable={withdrawable}
-          hlLoading={hlLoading}
-          isTestnet={hlTestnet}
-          refreshHlBalance={refreshPortfolio}
-          refreshArbitrumBalances={refreshBalances}
-        />
-        <SendForm
-          usdc={usdc}
-          eth={eth}
-          balLoading={balLoading}
-          refreshBalances={refreshBalances}
-        />
+        <DepositForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
+        <WithdrawForm withdrawable={withdrawable} hlLoading={hlLoading} isTestnet={hlTestnet} refreshHlBalance={refreshPortfolio} refreshArbitrumBalances={refreshBalances} />
+        <SendForm usdc={usdc} eth={eth} balLoading={balLoading} refreshBalances={refreshBalances} />
         <ExportKeyButton />
       </div>
 
+      {/* Performance chart */}
       <section className="card p-[22px]">
         <div className="mb-[16px] flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
-            <h2 className="m-0 text-[18px] font-bold tracking-[-0.01em] text-[var(--text)]">{activePortfolio.name}</h2>
-            <p className="mt-1 text-[13px] font-medium text-[var(--text2)]">{activePortfolio.strategy}</p>
+            <h2 className="m-0 text-[18px] font-bold tracking-[-0.01em] text-[var(--text)]">Performance</h2>
             <p className="mt-2 text-[12px] font-semibold text-[var(--text3)]">
               {periodLabel(period, customRange)} · <span className={portfolioDelta >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}>{portfolioDelta >= 0 ? "+" : ""}{(portfolioDelta * 100).toFixed(1)}%</span>
             </p>
@@ -335,95 +279,93 @@ function DashboardContent() {
         <PerformanceChart series={portfolioSeries} />
       </section>
 
+      {/* Stats */}
       <div className="grid grid-cols-2 gap-3 sm:gap-4 lg:grid-cols-4">
-        <div className="card">
+        <div className="stat-card">
           <p className="label">Account value</p>
-          <p className="text-2xl font-semibold">${displayedAccountValue.toFixed(2)}</p>
+          <p className="mono text-[22px] font-semibold text-[var(--text)]">${accountValue.toFixed(2)}</p>
           {withdrawable !== null && (
-            <p className="text-xs text-zinc-500 mt-1">
+            <p className="text-[11px] text-[var(--text3)] mt-1">
               Withdrawable: {hlLoading ? "..." : `$${withdrawable.toFixed(2)}`}
             </p>
           )}
         </div>
-        <div className="card">
+        <div className="stat-card">
           <p className="label">All-time PnL</p>
-          <p
-            className={`text-2xl font-semibold ${
-              allTimePnl === null ? "" : allTimePnl >= 0 ? "text-green-400" : "text-red-400"
-            }`}
-          >
+          <p className={`mono text-[22px] font-semibold ${allTimePnl === null ? "text-[var(--text)]" : allTimePnl >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}>
             {hlLoading && allTimePnl === null
               ? "..."
               : allTimePnl === null
                 ? "—"
                 : `${allTimePnl >= 0 ? "+" : "-"}$${Math.abs(allTimePnl).toFixed(2)}`}
           </p>
-          <p className="text-xs text-zinc-500 mt-1">Trading only (excl. deposits/withdrawals)</p>
         </div>
-        <div className="card">
+        <div className="stat-card">
           <p className="label">Open positions</p>
-          <p className="text-2xl font-semibold">{positions.length}</p>
+          <p className="mono text-[22px] font-semibold text-[var(--text)]">{positions.length}</p>
         </div>
-        <div className="card">
-          <p className="label">Est. carry (if set)</p>
-          <p className="text-2xl font-semibold">{displayedCarry.toFixed(1)}%/yr</p>
+        <div className="stat-card">
+          <p className="label">Est. carry</p>
+          <p className="mono text-[22px] font-semibold text-[var(--text)]">{carryPct !== null ? `${carryPct.toFixed(1)}%/yr` : "—"}</p>
         </div>
       </div>
 
-      <section className="card p-[18px]">
-        <div className="mb-3 flex items-center justify-between">
-          <h2 className="m-0 text-[15px] font-semibold text-[var(--text)]">Strategy allocation</h2>
-          <span className="mono text-[12px] text-[var(--text3)]">{activePortfolio.name}</span>
-        </div>
-        <div className="grid gap-3 md:grid-cols-4">
-          {activePortfolio.positions.map((position) => (
-            <div key={position.coin} className="rounded-[8px] border border-[var(--border)] bg-[var(--surface2)] p-3">
-              <div className="mono text-[14px] font-semibold text-[var(--text)]">{position.coin}</div>
-              <div className="mt-2 h-2 rounded-full bg-[var(--surface3)]">
-                <div className="h-2 rounded-full bg-[var(--accent)]" style={{ width: `${position.weight}%` }} />
+      {/* Real allocation from positions */}
+      {realAllocation.length > 0 && (
+        <section className="card p-[18px]">
+          <div className="mb-3 flex items-center justify-between">
+            <h2 className="m-0 text-[15px] font-semibold text-[var(--text)]">Current allocation</h2>
+            <span className="mono text-[12px] text-[var(--text3)]">{realAllocation.length} assets</span>
+          </div>
+          <div className="grid gap-3 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4">
+            {realAllocation.map((a) => (
+              <div key={a.coin} className="rounded-[8px] border border-[var(--border)] bg-[var(--surface2)] p-3">
+                <div className="flex items-center justify-between">
+                  <span className="mono text-[14px] font-semibold text-[var(--text)]">{a.coin}</span>
+                  <span className="mono text-[12px] font-semibold text-[var(--text2)]">{a.weight}%</span>
+                </div>
+                <div className="mt-2 h-[6px] rounded-full bg-[var(--surface3)]">
+                  <div className="h-[6px] rounded-full bg-[var(--accent)]" style={{ width: `${a.weight}%` }} />
+                </div>
+                <div className="mono mt-2 text-[11px] text-[var(--text3)]">${a.value.toFixed(0)}</div>
               </div>
-              <div className="mono mt-2 text-[12px] font-semibold text-[var(--text2)]">{position.weight}%</div>
-            </div>
-          ))}
-        </div>
-      </section>
+            ))}
+          </div>
+        </section>
+      )}
 
+      {/* Positions table */}
       <section className="space-y-3">
-        <h2 className="font-semibold">Positions</h2>
+        <h2 className="text-[16px] font-semibold text-[var(--text)]">Positions</h2>
         {positions.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No open positions on HyperLiquid.</p>
+          <p className="text-[13px] text-[var(--text3)]">No open positions on HyperLiquid.</p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-sm">
-              <thead className="text-zinc-500 text-left">
+          <div className="overflow-x-auto rounded-[12px] border border-[var(--border)] bg-[var(--surface)] shadow-[var(--shadow)]">
+            <table className="data-table">
+              <thead>
                 <tr>
-                  <th className="py-2">Coin</th>
+                  <th>Coin</th>
                   <th>Size</th>
-                  <th>Entry</th>
-                  <th>Value</th>
-                  <th>uPnL</th>
-                  <th>Liq px</th>
+                  <th className="text-right">Entry</th>
+                  <th className="text-right">Value</th>
+                  <th className="text-right">uPnL</th>
+                  <th className="hidden sm:table-cell text-right">Liq px</th>
                   <th></th>
                 </tr>
               </thead>
               <tbody>
                 {positions.map((p) => (
-                  <tr key={`${p.dex}:${p.coin}`} className="border-t border-zinc-800">
-                    <td className="py-2">{p.coin}</td>
-                    <td>{p.szi}</td>
-                    <td>${p.entryPx.toFixed(2)}</td>
-                    <td>${p.positionValue.toFixed(2)}</td>
-                    <td className={p.unrealizedPnl >= 0 ? "text-green-400" : "text-red-400"}>
-                      ${p.unrealizedPnl.toFixed(2)}
+                  <tr key={`${p.dex}:${p.coin}`}>
+                    <td className="font-semibold text-[var(--text)]">{displayCoin(p.coin)}</td>
+                    <td className="mono text-[13px] text-[var(--text2)]">{p.szi}</td>
+                    <td className="mono text-right text-[13px] text-[var(--text)]">${p.entryPx.toFixed(2)}</td>
+                    <td className="mono text-right text-[13px] font-medium text-[var(--text)]">${p.positionValue.toFixed(2)}</td>
+                    <td className={`mono text-right text-[13px] font-semibold ${p.unrealizedPnl >= 0 ? "text-[var(--pos)]" : "text-[var(--neg)]"}`}>
+                      {p.unrealizedPnl >= 0 ? "+" : ""}${p.unrealizedPnl.toFixed(2)}
                     </td>
-                    <td>{p.liquidationPx?.toFixed(2) ?? "—"}</td>
+                    <td className="hidden sm:table-cell mono text-right text-[13px] text-[var(--text2)]">{p.liquidationPx?.toFixed(2) ?? "—"}</td>
                     <td className="text-right">
-                      <ClosePositionButton
-                        coin={p.coin}
-                        dex={p.dex}
-                        getAccessToken={getAccessToken}
-                        onClosed={refreshPortfolio}
-                      />
+                      <ClosePositionButton coin={p.coin} dex={p.dex} getAccessToken={getAccessToken} onClosed={refreshPortfolio} />
                     </td>
                   </tr>
                 ))}
@@ -433,23 +375,22 @@ function DashboardContent() {
         )}
       </section>
 
+      {/* Active schedules */}
       <section className="space-y-3">
         <div className="flex justify-between items-center">
-          <h2 className="font-semibold">Active schedules</h2>
-          <Link href="/baskets" className="text-sm text-cyan-400">
-            + New schedule
-          </Link>
+          <h2 className="text-[16px] font-semibold text-[var(--text)]">Active schedules</h2>
+          <Link href="/baskets" className="text-[13px] font-semibold text-[var(--accentText)] no-underline">+ New schedule</Link>
         </div>
         {schedulesError ? (
-          <p className="text-red-400 text-sm">{schedulesError}</p>
+          <p className="text-[13px] text-[var(--neg)]">{schedulesError}</p>
         ) : schedules.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No active schedules.</p>
+          <p className="text-[13px] text-[var(--text3)]">No active schedules.</p>
         ) : (
           schedules.map((s) => (
             <div key={s.id} className="card flex justify-between items-center">
               <div>
-                <p className="font-medium">{s.baskets?.name}</p>
-                <p className="text-sm text-zinc-500">
+                <p className="m-0 text-[14px] font-semibold text-[var(--text)]">{s.baskets?.name}</p>
+                <p className="m-0 mt-1 text-[12.5px] text-[var(--text2)]">
                   ${s.amount_usd}/cycle · {s.leverage}x · {s.status}
                 </p>
               </div>
@@ -459,19 +400,20 @@ function DashboardContent() {
         )}
       </section>
 
+      {/* Followed baskets */}
       <section className="space-y-3">
-        <h2 className="font-semibold">Followed baskets</h2>
+        <h2 className="text-[16px] font-semibold text-[var(--text)]">Followed baskets</h2>
         {followedBaskets.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No followed baskets yet.</p>
+          <p className="text-[13px] text-[var(--text3)]">No followed baskets yet.</p>
         ) : (
           followedBaskets.map((follow) => (
             <div key={follow.id} className="card flex justify-between items-center">
               <div>
-                <p className="font-medium">{follow.baskets?.name}</p>
-                <p className="text-sm text-zinc-500">{follow.follow_mode} follow mode</p>
+                <p className="m-0 text-[14px] font-semibold text-[var(--text)]">{follow.baskets?.name}</p>
+                <p className="m-0 mt-1 text-[12.5px] text-[var(--text2)]">{follow.follow_mode} follow mode</p>
               </div>
               {follow.baskets?.id && (
-                <Link href={`/baskets/${follow.baskets.id}`} className="text-sm">
+                <Link href={`/baskets/${follow.baskets.id}`} className="btn-secondary px-3 py-[6px] text-[12.5px] no-underline">
                   View
                 </Link>
               )}
@@ -480,21 +422,22 @@ function DashboardContent() {
         )}
       </section>
 
+      {/* Mirror history */}
       <section className="space-y-3">
-        <h2 className="font-semibold">Mirror history</h2>
+        <h2 className="text-[16px] font-semibold text-[var(--text)]">Mirror history</h2>
         {mirrorHistory.length === 0 ? (
-          <p className="text-zinc-500 text-sm">No mirror executions yet.</p>
+          <p className="text-[13px] text-[var(--text3)]">No mirror executions yet.</p>
         ) : (
           mirrorHistory.map((execution) => (
-            <div key={execution.id} className="card flex justify-between gap-4">
+            <div key={execution.id} className="card flex justify-between items-center gap-4">
               <div>
-                <p className="font-medium">{execution.baskets?.name ?? "Basket"}</p>
-                <p className="text-sm text-zinc-500">
+                <p className="m-0 text-[14px] font-semibold text-[var(--text)]">{execution.baskets?.name ?? "Basket"}</p>
+                <p className="m-0 mt-1 text-[12.5px] text-[var(--text2)]">
                   {new Date(execution.execution_time).toLocaleString()} · {execution.trades_executed.length} trades
                 </p>
               </div>
-              <span className={execution.success ? "text-green-400" : "text-red-400"}>
-                {execution.success ? "success" : "failed"}
+              <span className={`rounded-[5px] px-[8px] py-[3px] text-[11px] font-semibold ${execution.success ? "bg-[var(--posSoft)] text-[var(--pos)]" : "bg-[var(--negSoft)] text-[var(--neg)]"}`}>
+                {execution.success ? "Success" : "Failed"}
               </span>
             </div>
           ))
@@ -541,13 +484,13 @@ function ClosePositionButton({
   return (
     <span className="inline-flex flex-col items-end">
       <button
-        className="text-xs text-red-400 border border-red-900 rounded px-2 py-1 disabled:opacity-50"
+        className="rounded-[5px] border border-[var(--neg)] bg-[var(--negSoft)] px-[10px] py-[4px] text-[11px] font-semibold text-[var(--neg)] disabled:opacity-50"
         disabled={loading}
         onClick={close}
       >
         {loading ? "Closing..." : "Close"}
       </button>
-      {error && <span className="text-[10px] text-red-400 mt-0.5">{error}</span>}
+      {error && <span className="text-[10px] text-[var(--neg)] mt-0.5">{error}</span>}
     </span>
   );
 }
@@ -585,10 +528,14 @@ function CloseButton({
 
   return (
     <div className="text-right space-y-1">
-      <button className="text-sm text-red-400 border border-red-900 rounded px-3 py-1" disabled={loading} onClick={close}>
-        {loading ? "Closing..." : "Close basket"}
+      <button
+        className="rounded-[5px] border border-[var(--neg)] bg-[var(--negSoft)] px-3 py-[5px] text-[12px] font-semibold text-[var(--neg)] disabled:opacity-50"
+        disabled={loading}
+        onClick={close}
+      >
+        {loading ? "Closing..." : "Close"}
       </button>
-      {error && <p className="text-xs text-red-400">{error}</p>}
+      {error && <p className="text-[11px] text-[var(--neg)]">{error}</p>}
     </div>
   );
 }
